@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YNAB Receipt Porter</title>
+    <link rel="stylesheet" href="index.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Outfit:wght@400;700&display=swap"
+        rel="stylesheet">
+</head>
+
+<body>
+    <div class="background-blobs">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+        <div class="blob blob-3"></div>
+    </div>
+
+    <main class="app-container">
+        <header>
+            <div class="logo">
+                <span class="logo-icon">🧾</span>
+                <h1>YNAB Receipt Porter</h1>
+            </div>
+            <p class="subtitle">Extract receipts with Chrome AI and sync to YNAB instantly.</p>
+        </header>
+
+        <section class="controls glass">
+            <div class="api-settings">
+                <div class="input-group">
+                    <label for="ynab-api-key">YNAB API Key</label>
+                    <input type="password" id="ynab-api-key" placeholder="Enter PAT...">
+                </div>
+                <div class="input-group">
+                    <label for="ynab-budget-id">Budget ID</label>
+                    <input type="text" id="ynab-budget-id" placeholder="Budget ID...">
+                </div>
+                <div class="input-group">
+                    <label for="ynab-account-id">Account ID</label>
+                    <input type="text" id="ynab-account-id" placeholder="Account ID...">
+                </div>
+            </div>
+
+            <div class="actions">
+                <button id="btn-sync-folder" class="btn primary">
+                    <span class="icon">📁</span>
+                    Connect Receipt Folder
+                </button>
+                <div id="ai-status" class="status-indicator">
+                    <span class="dot"></span>
+                    <span class="status-text">Checking AI status...</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="receipts-explorer glass">
+            <div class="explorer-header">
+                <h2>Pending Transactions</h2>
+                <div class="stats">
+                    <span id="processed-count">0</span> files currently in queue
+                </div>
+            </div>
+
+            <div id="receipt-list" class="receipt-grid">
+                <!-- Receipt items will be injected here -->
+                <div class="empty-state">
+                    <p>No receipts loaded yet. Choose a folder to start.</p>
+                </div>
+            </div>
+    </main>
+
+    <div id="full-view-modal" class="modal">
+        <div class="modal-content glass">
+            <span class="close-modal">&times;</span>
+            <img id="full-receipt-img" src="" alt="Full Receipt">
+        </div>
+    </div>
+
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>

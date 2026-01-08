@@ -1,0 +1,331 @@
+/**
+ * YNAB Receipt Porter - Core Application Logic
+ */
+
+// --- Constants & State ---
+const CONFIG = {
+    processedFilesKey: 'ynab_receipt_porter_processed',
+    ynabKeyPath: 'ynab_api_key',
+    ynabBudgetIdPath: 'ynab_budget_id',
+    ynabAccountIdPath: 'ynab_account_id'
+};
+
+let processedFiles = new Set(JSON.parse(localStorage.getItem(CONFIG.processedFilesKey) || '[]'));
+let aiSession = null;
+let directoryHandle = null;
+
+// --- DOM Elements ---
+const DOM = {
+    apiKey: document.getElementById('ynab-api-key'),
+    budgetId: document.getElementById('ynab-budget-id'),
+    accountId: document.getElementById('ynab-account-id'),
+    btnSync: document.getElementById('btn-sync-folder'),
+    aiStatus: document.getElementById('ai-status'),
+    receiptList: document.getElementById('receipt-list'),
+    processedCount: document.getElementById('processed-count'),
+    toastContainer: document.getElementById('toast-container')
+};
+
+// --- Initialization ---
+async function init() {
+    // Load saved settings
+    DOM.apiKey.value = localStorage.getItem(CONFIG.ynabKeyPath) || '';
+    DOM.budgetId.value = localStorage.getItem(CONFIG.ynabBudgetIdPath) || '';
+    DOM.accountId.value = localStorage.getItem(CONFIG.ynabAccountIdPath) || '';
+
+    // Save settings on change
+    [DOM.apiKey, DOM.budgetId, DOM.accountId].forEach(el => {
+        el.addEventListener('change', (e) => {
+            localStorage.setItem(e.target.id.replace(/-/g, '_'), e.target.value);
+        });
+    });
+
+    await checkAIAvailability();
+    DOM.btnSync.addEventListener('click', handleFolderSync);
+}
+
+// --- AI Logic ---
+async function checkAIAvailability() {
+    const dot = DOM.aiStatus.querySelector('.dot');
+    const text = DOM.aiStatus.querySelector('.status-text');
+
+    dot.className = 'dot loading';
+    text.textContent = 'Checking AI availability...';
+
+    try {
+        if (typeof LanguageModel === 'undefined') {
+            throw new Error('LanguageModel API not found. Please use Chrome Dev/Canary.');
+        }
+
+        const availability = await LanguageModel.availability({ languages: ['ja', 'en'] });
+
+        if (availability === 'available') {
+            dot.className = 'dot ok';
+            text.textContent = 'AI Model Ready';
+            showToast('Chrome AI is ready!', 'success');
+        } else if (availability === 'downloadable') {
+            dot.className = 'dot loading';
+            text.textContent = 'AI Model downloading...';
+            showToast('AI Model needs to download. Please wait.', 'info');
+        } else {
+            throw new Error(`AI not available: ${availability}`);
+        }
+    } catch (err) {
+        dot.className = 'dot error';
+        text.textContent = 'AI Error';
+        showToast(err.message, 'error');
+        console.error(err);
+    }
+}
+
+async function getAISession() {
+    if (aiSession) return aiSession;
+
+    const schema = {
+        type: "object",
+        properties: {
+            merchant: { type: "string" },
+            date: { type: "string", description: "YYYY-MM-DD format" },
+            amount: { type: "integer", description: "Total amount in cents or whole units" }
+        },
+        required: ["merchant", "date", "amount"]
+    };
+
+    aiSession = await LanguageModel.create({
+        expectedInputs: [
+            { type: "text", languages: ["en", "ja"] },
+            { type: "image" }
+        ],
+        initialPrompts: [
+            { role: 'system', content: "You are a Japanese receipt parser. Extract Merchant name, Date (YYYY-MM-DD), and Total Amount as a whole integer. Japanese Yen does not use cents/decimals, so always return a whole number (e.g., 1500 for 1,500 yen)." }
+        ]
+    });
+
+    return aiSession;
+}
+
+// --- File System Logic ---
+async function handleFolderSync() {
+    try {
+        directoryHandle = await window.showDirectoryPicker();
+        showToast('Folder connected!', 'success');
+        await scanFolder();
+    } catch (err) {
+        if (err.name !== 'AbortError') {
+            showToast('Folder access failed: ' + err.message, 'error');
+        }
+    }
+}
+
+async function scanFolder() {
+    if (!directoryHandle) return;
+
+    let totalPending = 0;
+    for await (const entry of directoryHandle.values()) {
+        if (entry.kind === 'file' && isImage(entry.name) && !processedFiles.has(entry.name)) {
+            totalPending++;
+            processReceipt(entry);
+        }
+    }
+    DOM.processedCount.textContent = totalPending;
+
+    if (totalPending === 0) {
+        showToast('No new receipts found.', 'info');
+    }
+}
+
+function isImage(filename) {
+    return /\.(jpe?g|png|webp)$/i.test(filename);
+}
+
+async function processReceipt(fileHandle) {
+    const file = await fileHandle.getFile();
+    const fileName = fileHandle.name;
+
+    // Create UI Card
+    const card = createReceiptCard(fileName, file);
+    if (DOM.receiptList.querySelector('.empty-state')) {
+        DOM.receiptList.innerHTML = '';
+    }
+    DOM.receiptList.appendChild(card);
+
+    try {
+        const session = await getAISession();
+        const imageBlob = file;
+
+        const schema = {
+            type: "object",
+            properties: {
+                merchant: { type: "string" },
+                date: { type: "string" },
+                amount: { type: "integer" }
+            }
+        };
+
+        const resultText = await session.prompt([
+            {
+                role: 'user',
+                content: [
+                    { type: 'text', value: "Extract JSON from this receipt:" },
+                    { type: 'image', value: imageBlob }
+                ]
+            }
+        ], { responseConstraint: schema });
+
+        const data = JSON.parse(resultText);
+        updateReceiptCard(card, data);
+    } catch (err) {
+        console.error('AI Processing error:', err);
+        showToast(`AI failed for ${fileName}`, 'error');
+    }
+}
+
+// --- UI Helpers ---
+let cardCounter = 0;
+
+function createReceiptCard(fileName, file) {
+    cardCounter++;
+    const card = document.createElement('div');
+    card.className = 'receipt-card';
+    card.id = `receipt-${cardCounter}`;
+
+    const url = URL.createObjectURL(file);
+
+    card.innerHTML = `
+        <div class="receipt-preview-container" title="Click to enlarge">
+            <img src="${url}" class="receipt-preview" alt="Receipt preview">
+            <div class="zoom-badge">🔍 Zoom</div>
+        </div>
+        <div class="receipt-info">
+            <div class="field-group">
+                <label>Merchant</label>
+                <input type="text" class="edit-input merchant-input" placeholder="Analyzing...">
+            </div>
+            <div class="field-group">
+                <label>Date</label>
+                <input type="date" class="edit-input date-input">
+            </div>
+            <div class="field-group">
+                <label>Amount (JPY)</label>
+                <div class="amount-display">
+                    <span class="currency-symbol">¥</span>
+                    <input type="number" class="edit-input amount-input" placeholder="0">
+                </div>
+            </div>
+        </div>
+        <div class="card-actions">
+            <button class="btn btn-small btn-push" disabled>Push to YNAB</button>
+            <button class="btn btn-small btn-dismiss">Dismiss</button>
+        </div>
+    `;
+
+    // Modal logic
+    card.querySelector('.receipt-preview-container').addEventListener('click', () => {
+        const modal = document.getElementById('full-view-modal');
+        const modalImg = document.getElementById('full-receipt-img');
+        modal.style.display = 'block';
+        modalImg.src = url;
+    });
+
+    card.querySelector('.btn-push').addEventListener('click', () => pushToYNAB(card, fileName));
+    card.querySelector('.btn-dismiss').addEventListener('click', () => {
+        card.remove();
+        markAsProcessed(fileName);
+    });
+
+    return card;
+}
+
+function updateReceiptCard(card, data) {
+    card.querySelector('.merchant-input').value = data.merchant || '';
+    card.querySelector('.date-input').value = data.date || '';
+    card.querySelector('.amount-input').value = data.amount || 0;
+    card.querySelector('.btn-push').disabled = false;
+}
+
+// --- YNAB Logic ---
+async function pushToYNAB(card, fileName) {
+    const apiKey = DOM.apiKey.value;
+    const budgetId = DOM.budgetId.value;
+    const accountId = DOM.accountId.value;
+
+    if (!apiKey || !budgetId || !accountId) {
+        showToast('Please fill in all YNAB settings.', 'error');
+        return;
+    }
+
+    const merchant = card.querySelector('.merchant-input').value;
+    const date = card.querySelector('.date-input').value;
+    const amountVal = card.querySelector('.amount-input').value;
+
+    if (!merchant || !date || !amountVal) {
+        showToast('Please verify all fields before pushing.', 'error');
+        return;
+    }
+
+    const amount = parseInt(amountVal) * 1000; // JPY Amount * 1000 for YNAB milliunits
+
+    const transaction = {
+        transaction: {
+            account_id: accountId,
+            date: date,
+            amount: -Math.abs(amount), // Outflow
+            payee_name: merchant,
+            cleared: 'cleared'
+        }
+    };
+
+    try {
+        const response = await fetch(`https://api.ynab.com/v1/budgets/${budgetId}/transactions`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(transaction)
+        });
+
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error.detail || 'YNAB API error');
+        }
+
+        showToast(`Synced ${card.dataset.merchant} to YNAB!`, 'success');
+        card.classList.add('synced');
+        setTimeout(() => {
+            card.remove();
+            markAsProcessed(fileName);
+        }, 500);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+function markAsProcessed(fileName) {
+    processedFiles.add(fileName);
+    localStorage.setItem(CONFIG.processedFilesKey, JSON.stringify([...processedFiles]));
+}
+
+// --- Utilities ---
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    DOM.toastContainer.appendChild(toast);
+    setTimeout(() => toast.remove(), 4000);
+}
+
+// --- Global Modal Listeners ---
+document.querySelector('.close-modal')?.addEventListener('click', () => {
+    document.getElementById('full-view-modal').style.display = 'none';
+});
+
+window.addEventListener('click', (event) => {
+    const modal = document.getElementById('full-view-modal');
+    if (event.target === modal) {
+        modal.style.display = 'none';
+    }
+});
+
+// Start the app
+init();
