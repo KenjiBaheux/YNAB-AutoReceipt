@@ -11,7 +11,7 @@ const CONFIG = {
 };
 
 let processedFiles = new Set(JSON.parse(localStorage.getItem(CONFIG.processedFilesKey) || '[]'));
-let aiSession = null;
+let baseSession = null;
 let directoryHandle = null;
 
 // --- DOM Elements ---
@@ -63,6 +63,7 @@ async function checkAIAvailability() {
             dot.className = 'dot ok';
             text.textContent = 'AI Model Ready';
             showToast('Chrome AI is ready!', 'success');
+            warmUpAI(); // Trigger warm-up in background
         } else if (availability === 'downloadable') {
             dot.className = 'dot loading';
             text.textContent = 'AI Model downloading...';
@@ -78,30 +79,43 @@ async function checkAIAvailability() {
     }
 }
 
+async function warmUpAI() {
+    if (baseSession) return;
+
+    try {
+        baseSession = await LanguageModel.create({
+            expectedInputs: [
+                { type: "text", languages: ["en", "ja"] },
+                { type: "image" }
+            ],
+            initialPrompts: [
+                {
+                    role: 'system', content: `You are a Japanese receipt parser. Extract Merchant name, Date (YYYY-MM-DD), and Total Amount as a whole integer. 
+
+            Hints for extractions:
+            - **Total Amount**: Usually in a larger or bold font, preceded by "合計" or the symbol "¥". Japanese Yen does not use cents/decimals.
+            - **Date**: Look for "YYYY/MM/DD", "YYYY-MM-DD", or "YYYY年MM月DD日". It's often at the top and may be followed by a time (HH:mm).
+            - **Merchant**: Usually at the very top. It's often followed by an address or phone number. Do not confuse generic terms like "領収書" (Receipt) with the vendor name.
+            ` }
+            ]
+        });
+
+        // Dummy prompt to trigger model loading/warming
+        await baseSession.prompt([{ role: 'user', content: [{ type: 'text', value: 'Warm up' }] }]);
+        console.log('AI Warm-up successful');
+    } catch (err) {
+        console.warn('AI Warm-up failed:', err);
+    }
+}
+
 async function getAISession() {
-    if (aiSession) return aiSession;
+    if (!baseSession) {
+        await warmUpAI();
+    }
+    if (!baseSession) throw new Error("Could not initialize AI session");
 
-    const schema = {
-        type: "object",
-        properties: {
-            merchant: { type: "string" },
-            date: { type: "string", description: "YYYY-MM-DD format" },
-            amount: { type: "integer", description: "Total amount in cents or whole units" }
-        },
-        required: ["merchant", "date", "amount"]
-    };
-
-    aiSession = await LanguageModel.create({
-        expectedInputs: [
-            { type: "text", languages: ["en", "ja"] },
-            { type: "image" }
-        ],
-        initialPrompts: [
-            { role: 'system', content: "You are a Japanese receipt parser. Extract Merchant name, Date (YYYY-MM-DD), and Total Amount as a whole integer. Japanese Yen does not use cents/decimals, so always return a whole number (e.g., 1500 for 1,500 yen)." }
-        ]
-    });
-
-    return aiSession;
+    // Clone the base session so each extraction starts from the clean system prompt
+    return await baseSession.clone();
 }
 
 // --- File System Logic ---
@@ -225,6 +239,8 @@ function createReceiptCard(fileName, file) {
         const modalImg = document.getElementById('full-receipt-img');
         modal.style.display = 'block';
         modalImg.src = url;
+        modalImg.classList.remove('zoomed'); // Reset zoom on open
+        document.body.classList.add('modal-open');
     });
 
     card.querySelector('.btn-push').addEventListener('click', () => pushToYNAB(card, fileName));
@@ -238,9 +254,39 @@ function createReceiptCard(fileName, file) {
 
 function updateReceiptCard(card, data) {
     card.querySelector('.merchant-input').value = data.merchant || '';
-    card.querySelector('.date-input').value = data.date || '';
+    card.querySelector('.date-input').value = normalizeDate(data.date) || '';
     card.querySelector('.amount-input').value = data.amount || 0;
     card.querySelector('.btn-push').disabled = false;
+}
+
+/**
+ * Normalizes various date formats to YYYY-MM-DD for HTML date inputs
+ * Handles: 2026/01/01, 2026年01月01日, 2026.01.01, etc.
+ */
+function normalizeDate(dateStr) {
+    if (!dateStr) return '';
+
+    // Replace common separators with dash
+    let clean = dateStr.replace(/[年月日\/\.]/g, '-');
+    // Remove trailing dash (often from '日')
+    clean = clean.replace(/-$/, '');
+
+    const parts = clean.split('-').filter(p => p.trim() !== '');
+    if (parts.length >= 3) {
+        let [y, m, d] = parts;
+        // Basic padding
+        m = m.padStart(2, '0');
+        d = d.padStart(2, '0');
+        // Ensure 4-digit year
+        if (y.length === 2) y = '20' + y;
+
+        const iso = `${y}-${m}-${d}`;
+        // Validate it's a real date
+        if (!isNaN(Date.parse(iso))) {
+            return iso;
+        }
+    }
+    return ''; // Return empty if invalid to avoid browser warnings
 }
 
 // --- YNAB Logic ---
@@ -316,14 +362,40 @@ function showToast(message, type = 'info') {
 }
 
 // --- Global Modal Listeners ---
-document.querySelector('.close-modal')?.addEventListener('click', () => {
-    document.getElementById('full-view-modal').style.display = 'none';
+function closeModal() {
+    const modal = document.getElementById('full-view-modal');
+    const modalImg = document.getElementById('full-receipt-img');
+    modal.style.display = 'none';
+    modalImg.classList.remove('zoomed');
+    document.body.classList.remove('modal-open');
+}
+
+// Zoom gestures
+const modalImg = document.getElementById('full-receipt-img');
+modalImg?.addEventListener('click', (e) => {
+    e.stopPropagation(); // Don't close modal when clicking image
+    modalImg.classList.toggle('zoomed');
 });
+
+modalImg?.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (modalImg.classList.contains('zoomed')) {
+        modalImg.classList.remove('zoomed');
+    }
+});
+
+document.querySelector('.close-modal')?.addEventListener('click', closeModal);
 
 window.addEventListener('click', (event) => {
     const modal = document.getElementById('full-view-modal');
     if (event.target === modal) {
-        modal.style.display = 'none';
+        closeModal();
+    }
+});
+
+window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+        closeModal();
     }
 });
 

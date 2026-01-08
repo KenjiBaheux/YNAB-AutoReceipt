@@ -26,6 +26,10 @@ body {
     min-height: 100vh;
 }
 
+body.modal-open {
+    overflow: hidden;
+}
+
 /* Background Blobs */
 .background-blobs {
     position: fixed;
@@ -302,19 +306,22 @@ h2 {
 .receipt-preview-container {
     position: relative;
     cursor: zoom-in;
+    height: 140px;
+    overflow: hidden;
+    border-radius: 8px;
+    background: #000;
 }
 
 .receipt-preview {
     width: 100%;
-    height: 140px;
+    height: auto;
     object-fit: cover;
-    border-radius: 8px;
-    background: #000;
-    transition: opacity 0.3s;
+    transition: transform 4s ease-in-out;
+    transform-origin: top;
 }
 
-.receipt-preview:hover {
-    opacity: 0.8;
+.receipt-preview-container:hover .receipt-preview {
+    transform: translateY(calc(-100% + 140px));
 }
 
 .zoom-badge {
@@ -405,39 +412,55 @@ h2 {
     top: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(0, 0, 0, 0.9);
+    background-color: rgba(0, 0, 0, 0.95);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
+    overflow: auto;
+    cursor: zoom-out;
+    /* Click background to close */
 }
 
 .modal-content {
-    margin: auto;
-    display: block;
-    max-width: 90%;
-    max-height: 90%;
-    position: relative;
-    top: 50%;
-    transform: translateY(-50%);
-    padding: 1rem;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100%;
+    padding: 2rem;
+    pointer-events: none;
+    /* Let clicks pass through to modal container */
 }
 
 .modal-content img {
-    max-width: 100%;
-    max-height: 100%;
+    max-width: 90vw;
+    max-height: 90vh;
     object-fit: contain;
     border-radius: 10px;
     box-shadow: 0 0 50px rgba(0, 0, 0, 0.5);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: zoom-in;
+    pointer-events: auto;
+    background: #000;
+}
+
+.modal-content img.zoomed {
+    max-width: none;
+    max-height: none;
+    width: auto;
+    height: auto;
+    cursor: zoom-out;
 }
 
 .close-modal {
-    position: absolute;
-    top: -40px;
-    right: 0;
+    position: fixed;
+    /* Keep it visible while scrolling */
+    top: 20px;
+    right: 40px;
     color: #fff;
-    font-size: 30px;
+    font-size: 40px;
     font-weight: bold;
     cursor: pointer;
     transition: color 0.3s;
+    z-index: 2100;
 }
 
 .close-modal:hover {
