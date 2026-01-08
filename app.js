@@ -13,6 +13,7 @@ const CONFIG = {
 let processedFiles = new Set(JSON.parse(localStorage.getItem(CONFIG.processedFilesKey) || '[]'));
 let baseSession = null;
 let directoryHandle = null;
+let activeRedactionCard = null; // Track which card is currently in the modal
 
 // --- DOM Elements ---
 const DOM = {
@@ -166,9 +167,12 @@ async function processReceipt(fileHandle) {
     }
     DOM.receiptList.appendChild(card);
 
+    await runAIExtraction(file, card, fileName);
+}
+
+async function runAIExtraction(imageBlob, card, fileName) {
     try {
         const session = await getAISession();
-        const imageBlob = file;
 
         const schema = {
             type: "object",
@@ -242,12 +246,19 @@ function createReceiptCard(fileName, file) {
 
     // Modal logic
     card.querySelector('.receipt-preview-container').addEventListener('click', () => {
+        activeRedactionCard = { card, fileName, file };
         const modal = document.getElementById('full-view-modal');
         const modalImg = document.getElementById('full-receipt-img');
         modal.style.display = 'block';
         modalImg.src = url;
         modalImg.classList.remove('zoomed'); // Reset zoom on open
         document.body.classList.add('modal-open');
+
+        // Reset redaction tool
+        document.getElementById('full-view-modal').classList.remove('redact-mode');
+        document.getElementById('btn-clear-redaction').style.display = 'none';
+        document.getElementById('btn-retry-ai').style.display = 'none';
+        clearRedactionCanvas();
     });
 
     card.querySelector('.btn-push').addEventListener('click', () => pushToYNAB(card, fileName));
@@ -260,9 +271,10 @@ function createReceiptCard(fileName, file) {
 }
 
 function updateReceiptCard(card, data) {
-    const merchants = data.merchants || [];
-    const dates = data.dates || [];
-    const amounts = data.amounts || [];
+    // Deduplicate candidates while preserving order
+    const merchants = [...new Set(data.merchants || [])];
+    const dates = [...new Set(data.dates || [])];
+    const amounts = [...new Set(data.amounts || [])];
 
     // Set primary values (most likely)
     card.querySelector('.merchant-input').value = merchants[0] || '';
@@ -417,13 +429,134 @@ function closeModal() {
     modal.style.display = 'none';
     modalImg.classList.remove('zoomed');
     document.body.classList.remove('modal-open');
+    activeRedactionCard = null;
+}
+
+// Redaction Logic
+const canvas = document.getElementById('redaction-canvas');
+const ctx = canvas.getContext('2d');
+let isDrawing = false;
+let startX, startY;
+let redactions = []; // Store rectangles: {x, y, w, h}
+
+function setupRedactionCanvas() {
+    const img = document.getElementById('full-receipt-img');
+    canvas.width = img.clientWidth;
+    canvas.height = img.clientHeight;
+    redrawRedactions();
+}
+
+function clearRedactionCanvas() {
+    redactions = [];
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+function redrawRedactions() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'black';
+    redactions.forEach(rect => {
+        ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    });
+}
+
+document.getElementById('btn-redact-mode').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const modal = document.getElementById('full-view-modal');
+    const isActive = modal.classList.toggle('redact-mode');
+    document.getElementById('btn-clear-redaction').style.display = isActive ? 'block' : 'none';
+    document.getElementById('btn-retry-ai').style.display = isActive ? 'block' : 'none';
+    if (isActive) setupRedactionCanvas();
+});
+
+document.getElementById('btn-clear-redaction').addEventListener('click', (e) => {
+    e.stopPropagation();
+    clearRedactionCanvas();
+});
+
+canvas.addEventListener('mousedown', (e) => {
+    isDrawing = true;
+    const rect = canvas.getBoundingClientRect();
+    startX = e.clientX - rect.left;
+    startY = e.clientY - rect.top;
+});
+
+canvas.addEventListener('mousemove', (e) => {
+    if (!isDrawing) return;
+    const rect = canvas.getBoundingClientRect();
+    const currentX = e.clientX - rect.left;
+    const currentY = e.clientY - rect.top;
+
+    redrawRedactions();
+
+    // Draw current preview rectangle
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(startX, startY, currentX - startX, currentY - startY);
+    ctx.strokeStyle = 'var(--accent-primary)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(startX, startY, currentX - startX, currentY - startY);
+});
+
+window.addEventListener('mouseup', (e) => {
+    if (!isDrawing) return;
+    isDrawing = false;
+
+    const rect = canvas.getBoundingClientRect();
+    const endX = e.clientX - rect.left;
+    const endY = e.clientY - rect.top;
+
+    const w = endX - startX;
+    const h = endY - startY;
+
+    if (Math.abs(w) > 5 && Math.abs(h) > 5) {
+        redactions.push({ x: startX, y: startY, w, h });
+    }
+
+    redrawRedactions();
+});
+
+document.getElementById('btn-retry-ai').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!activeRedactionCard) return;
+
+    const indicator = document.getElementById('retrying-indicator');
+    indicator.style.display = 'flex';
+
+    try {
+        const redactedBlob = await captureRedactedImage();
+        await runAIExtraction(redactedBlob, activeRedactionCard.card, activeRedactionCard.fileName);
+        showToast('AI re-processed with redactions!', 'success');
+        closeModal();
+    } catch (err) {
+        showToast('Retry failed: ' + err.message, 'error');
+    } finally {
+        indicator.style.display = 'none';
+    }
+});
+
+async function captureRedactedImage() {
+    const img = document.getElementById('full-receipt-img');
+    const offscreen = document.createElement('canvas');
+    const oCtx = offscreen.getContext('2d');
+
+    offscreen.width = img.naturalWidth;
+    offscreen.height = img.naturalHeight;
+
+    // Draw original image
+    oCtx.drawImage(img, 0, 0);
+
+    // Draw redactions scaled to original size
+    oCtx.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, img.naturalWidth, img.naturalHeight);
+
+    return new Promise(resolve => offscreen.toBlob(resolve, 'image/jpeg', 0.9));
 }
 
 // Zoom gestures
 const modalImg = document.getElementById('full-receipt-img');
 modalImg?.addEventListener('click', (e) => {
+    if (document.getElementById('full-view-modal').classList.contains('redact-mode')) return;
     e.stopPropagation(); // Don't close modal when clicking image
     modalImg.classList.toggle('zoomed');
+    setTimeout(setupRedactionCanvas, 350); // Recalculate canvas after zoom transistion
 });
 
 modalImg?.addEventListener('contextmenu', (e) => {

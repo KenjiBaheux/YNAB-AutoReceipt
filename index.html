@@ -76,7 +76,19 @@
     <div id="full-view-modal" class="modal">
         <div class="modal-content glass">
             <span class="close-modal">&times;</span>
-            <img id="full-receipt-img" src="" alt="Full Receipt">
+            <div class="modal-toolbar">
+                <button id="btn-redact-mode" class="btn btn-small btn-dismiss">🪄 Magic Eraser</button>
+                <button id="btn-clear-redaction" class="btn btn-small btn-dismiss" style="display: none;">Clear</button>
+                <button id="btn-retry-ai" class="btn btn-small btn-push" style="display: none;">Retry AI</button>
+                <div id="retrying-indicator" class="status-indicator" style="display: none;">
+                    <span class="dot loading"></span>
+                    <span>Retrying...</span>
+                </div>
+            </div>
+            <div class="canvas-wrapper">
+                <img id="full-receipt-img" src="" alt="Full Receipt">
+                <canvas id="redaction-canvas"></canvas>
+            </div>
         </div>
     </div>
 
