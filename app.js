@@ -90,13 +90,16 @@ async function warmUpAI() {
             ],
             initialPrompts: [
                 {
-                    role: 'system', content: `You are a Japanese receipt parser. Extract Merchant name, Date (YYYY-MM-DD), and Total Amount as a whole integer. 
+                    role: 'system', content: `You are a Japanese receipt parser. Extract Merchant name, Date (YYYY-MM-DD), and Total Amount as a whole integer.
+                    
+                    Provide up to 3 candidates for each field, ordered by likelihood (most likely first).
+                    If a field is very certain, you can provide fewer candidates.
 
-            Hints for extractions:
-            - **Total Amount**: Usually in a larger or bold font, preceded by "合計" or the symbol "¥". Japanese Yen does not use cents/decimals.
-            - **Date**: Look for "YYYY/MM/DD", "YYYY-MM-DD", or "YYYY年MM月DD日". It's often at the top and may be followed by a time (HH:mm).
-            - **Merchant**: Usually at the very top. It's often followed by an address or phone number. Do not confuse generic terms like "領収書" (Receipt) with the vendor name.
-            ` }
+                    Hints for extractions:
+                    - **Total Amount**: Usually in a larger or bold font, preceded by "合計" or the symbol "¥". Japanese Yen does not use cents/decimals.
+                    - **Date**: Look for "YYYY/MM/DD", "YYYY-MM-DD", or "YYYY年MM月DD日". It's often at the top and may be followed by a time (HH:mm).
+                    - **Merchant**: Usually at the very top. It's often followed by an address or phone number. Do not confuse generic terms like "領収書" (Receipt) with the vendor name.
+                    ` }
             ]
         });
 
@@ -170,10 +173,11 @@ async function processReceipt(fileHandle) {
         const schema = {
             type: "object",
             properties: {
-                merchant: { type: "string" },
-                date: { type: "string" },
-                amount: { type: "integer" }
-            }
+                merchants: { type: "array", items: { type: "string" }, description: "Up to 3 merchant candidates, most likely first" },
+                dates: { type: "array", items: { type: "string" }, description: "Up to 3 date candidates (YYYY-MM-DD), most likely first" },
+                amounts: { type: "array", items: { type: "integer" }, description: "Up to 3 amount candidates (whole numbers), most likely first" }
+            },
+            required: ["merchants", "dates", "amounts"]
         };
 
         const resultText = await session.prompt([
@@ -214,10 +218,12 @@ function createReceiptCard(fileName, file) {
             <div class="field-group">
                 <label>Merchant</label>
                 <input type="text" class="edit-input merchant-input" placeholder="Analyzing...">
+                <div class="suggestion-chips merchants-chips"></div>
             </div>
             <div class="field-group">
                 <label>Date</label>
                 <input type="date" class="edit-input date-input">
+                <div class="suggestion-chips dates-chips"></div>
             </div>
             <div class="field-group">
                 <label>Amount (JPY)</label>
@@ -225,6 +231,7 @@ function createReceiptCard(fileName, file) {
                     <span class="currency-symbol">¥</span>
                     <input type="number" class="edit-input amount-input" placeholder="0">
                 </div>
+                <div class="suggestion-chips amounts-chips"></div>
             </div>
         </div>
         <div class="card-actions">
@@ -253,10 +260,52 @@ function createReceiptCard(fileName, file) {
 }
 
 function updateReceiptCard(card, data) {
-    card.querySelector('.merchant-input').value = data.merchant || '';
-    card.querySelector('.date-input').value = normalizeDate(data.date) || '';
-    card.querySelector('.amount-input').value = data.amount || 0;
+    const merchants = data.merchants || [];
+    const dates = data.dates || [];
+    const amounts = data.amounts || [];
+
+    // Set primary values (most likely)
+    card.querySelector('.merchant-input').value = merchants[0] || '';
+    card.querySelector('.date-input').value = normalizeDate(dates[0]) || '';
+    card.querySelector('.amount-input').value = amounts[0] || 0;
     card.querySelector('.btn-push').disabled = false;
+
+    // Render alternative chips
+    renderChips(card.querySelector('.merchants-chips'), merchants, val => {
+        card.querySelector('.merchant-input').value = val;
+    });
+    renderChips(card.querySelector('.dates-chips'), dates, val => {
+        card.querySelector('.date-input').value = normalizeDate(val);
+    });
+    renderChips(card.querySelector('.amounts-chips'), amounts, val => {
+        card.querySelector('.amount-input').value = val;
+    });
+}
+
+function renderChips(container, values, onSelect) {
+    container.innerHTML = '';
+    // If only one (or no) value, nothing to suggest
+    if (values.length <= 1) return;
+
+    values.forEach((val, idx) => {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        if (idx === 0) chip.classList.add('active');
+
+        // Formatting for display
+        let displayVal = val;
+        if (typeof val === 'number') displayVal = `¥${val}`;
+
+        chip.textContent = displayVal;
+        chip.title = `Switch to ${displayVal}`;
+
+        chip.addEventListener('click', () => {
+            onSelect(val);
+            container.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+            chip.classList.add('active');
+        });
+        container.appendChild(chip);
+    });
 }
 
 /**
