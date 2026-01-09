@@ -282,8 +282,24 @@ export function getActiveRedactionCard() {
 export function updateModalToolbar() {
     const modal = document.getElementById('full-view-modal');
     const isRedactMode = modal.classList.contains('redact-mode');
-    document.getElementById('btn-delete-redaction').style.display = (isRedactMode && selectedRedactionIndex !== -1) ? 'block' : 'none';
-    document.getElementById('btn-clear-redaction').style.display = (isRedactMode && currentRedactions.length > 0) ? 'block' : 'none';
+
+    const btnDelete = document.getElementById('btn-delete-redaction');
+    const btnClear = document.getElementById('btn-clear-redaction');
+
+    if (isRedactMode) {
+        btnDelete.style.display = 'block';
+        btnClear.style.display = 'block';
+
+        btnDelete.disabled = (selectedRedactionIndex === -1);
+        btnClear.disabled = (currentRedactions.length === 0);
+
+        // Visual feedback for disabled state if CSS doesn't handle it
+        btnDelete.style.opacity = btnDelete.disabled ? '0.5' : '1';
+        btnClear.style.opacity = btnClear.disabled ? '0.5' : '1';
+    } else {
+        btnDelete.style.display = 'none';
+        btnClear.style.display = 'none';
+    }
 }
 
 export function renderRedactions(redactions) {
@@ -365,13 +381,21 @@ export function deleteSelectedRedaction() {
 }
 
 export function clearAllRedactions() {
+    console.log('Clearing all redactions, count was:', currentRedactions.length);
     currentRedactions = [];
     selectedRedactionIndex = -1;
+
+    // Explicitly clear DOM to be safe
+    const container = document.getElementById('redactions-container');
+    if (container) container.innerHTML = '';
+
     renderRedactions(currentRedactions);
     updateModalToolbar();
 
     // Update card data
     const activeData = getActiveRedactionCard();
-    activeData.redactions = currentRedactions;
-    activeData.card.dataset.redactions = JSON.stringify(currentRedactions);
+    if (activeData && activeData.card) {
+        activeData.redactions = currentRedactions;
+        activeData.card.dataset.redactions = JSON.stringify(currentRedactions);
+    }
 }

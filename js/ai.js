@@ -45,7 +45,10 @@ export async function warmUpAI() {
     const ynabCategories = getYNABCategories();
 
     try {
+        const params = await LanguageModel.params();
         baseSession = await LanguageModel.create({
+            temperature: 0.0,
+            topK: params.defaultTopK,
             expectedInputs: [
                 { type: "text", languages: ["en", "ja"] },
                 { type: "image" }
@@ -56,6 +59,7 @@ export async function warmUpAI() {
                     
                     Provide up to 3 candidates for each field, ordered by likelihood (most likely first).
                     If a field is very certain, you can provide fewer candidates.
+                    Omit any explanations.
 
                     Hints for extractions:
                     - **Total Amount**: Usually preceded by the symbol "¥", and typically presented in a larger or bold font and after the "合計" label. Japanese Yen does not use cents/decimals.

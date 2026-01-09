@@ -6,7 +6,7 @@ import { optimizeImageForAI } from './image.js';
 import { createReceiptCard } from './card.js';
 import { runAIExtraction } from './ai.js';
 import { updateProgressCounter, showToast } from './ui.js';
-import { setupCroppingUI, renderRedactions, updateModalToolbar, setupRedactionCanvas, clearRedactionCanvas, getActiveRedactionCard } from './modal.js';
+import { setupCroppingUI, renderRedactions, updateModalToolbar, setupRedactionCanvas, clearRedactionCanvas, getActiveRedactionCard, deleteSelectedRedaction, clearAllRedactions } from './modal.js';
 
 let directoryHandle = null;
 
