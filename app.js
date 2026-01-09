@@ -14,6 +14,7 @@ let processedFiles = new Set(JSON.parse(localStorage.getItem(CONFIG.processedFil
 let baseSession = null;
 let directoryHandle = null;
 let activeRedactionCard = null; // Track which card is currently in the modal
+let ynabCategories = []; // Store flattened {id, name, group} from YNAB
 
 // --- DOM Elements ---
 const DOM = {
@@ -40,12 +41,52 @@ async function init() {
     [DOM.apiKey, DOM.budgetId, DOM.accountId].forEach(el => {
         el.addEventListener('change', (e) => {
             localStorage.setItem(e.target.id.replace(/-/g, '_'), e.target.value);
+            if (DOM.apiKey.value && DOM.budgetId.value) fetchYNABCategories();
         });
     });
 
     await checkAIAvailability();
+    if (DOM.apiKey.value && DOM.budgetId.value) fetchYNABCategories();
+
     DOM.btnSync.addEventListener('click', handleFolderSync);
     DOM.btnPushAll.addEventListener('click', pushAllToYNAB);
+}
+
+async function fetchYNABCategories() {
+    const apiKey = DOM.apiKey.value;
+    const budgetId = DOM.budgetId.value;
+
+    if (!apiKey || !budgetId) return;
+
+    try {
+        const response = await fetch(`https://api.ynab.com/v1/budgets/${budgetId}/categories`, {
+            headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+
+        if (!response.ok) throw new Error('Failed to fetch categories');
+
+        const data = await response.json();
+        const groups = data.data.category_groups;
+
+        ynabCategories = [];
+        groups.forEach(group => {
+            if (group.hidden || group.deleted) return;
+            group.categories.forEach(cat => {
+                if (!cat.hidden && !cat.deleted) {
+                    ynabCategories.push({
+                        id: cat.id,
+                        name: cat.name,
+                        group: group.name
+                    });
+                }
+            });
+        });
+
+        console.log(`Loaded ${ynabCategories.length} YNAB categories`);
+    } catch (err) {
+        console.error('Error loading YNAB categories:', err);
+        // Don't show toast here to avoid spamming on init if offline/bad key
+    }
 }
 
 // --- AI Logic ---
@@ -58,7 +99,7 @@ async function checkAIAvailability() {
 
     try {
         if (typeof LanguageModel === 'undefined') {
-            throw new Error('LanguageModel API not found. Please use Chrome Dev/Canary.');
+            throw new Error('LanguageModel API not found. Please use a browser that supports it.');
         }
 
         const availability = await LanguageModel.availability({ languages: ['ja', 'en'] });
@@ -66,12 +107,12 @@ async function checkAIAvailability() {
         if (availability === 'available') {
             dot.className = 'dot ok';
             text.textContent = 'AI Model Ready';
-            showToast('Chrome AI is ready!', 'success');
+            showToast('Built-in AI is ready!', 'success');
             warmUpAI(); // Trigger warm-up in background
         } else if (availability === 'downloadable') {
             dot.className = 'dot loading';
             text.textContent = 'AI Model downloading...';
-            showToast('AI Model needs to download. Please wait.', 'info');
+            showToast('AI Model needs to be downloaded. Please wait.', 'info');
         } else {
             throw new Error(`AI not available: ${availability}`);
         }
@@ -96,14 +137,18 @@ async function warmUpAI() {
                 {
                     role: 'system', content: `You are a Japanese receipt parser. Extract Merchant name, Date (YYYY-MM-DD), Total Amount as a whole integer, and Category.
                     
-                    Provide up to 5 candidates for each field, ordered by likelihood (most likely first).
+                    Provide up to 3 candidates for each field, ordered by likelihood (most likely first).
                     If a field is very certain, you can provide fewer candidates.
 
                     Hints for extractions:
                     - **Total Amount**: Usually preceded by the symbol "¥", and typically presented in a larger or bold font and after the "合計" label. Japanese Yen does not use cents/decimals.
                     - **Date**: Look for "YYYY/MM/DD", "YYYY-MM-DD", or "YYYY年MM月DD日". It's often at the top and may be followed by a time (HH:mm).
                     - **Merchant**: Usually at the very top. It's often followed by an address or phone number. Do not confuse generic terms like "領収書" (Receipt) with the vendor name.
-                    - **Category**: Suggest possible YNAB categories (e.g., Dining Out, Groceries, Transportation, Entertainment, Shopping).
+                    - **Category**: Suggest possible YNAB categories.
+                    
+                    ${ynabCategories.length > 0
+                            ? `Use one of the following categories if applicable: ${ynabCategories.map(c => c.name).join(', ')}. IF NONE FIT, leave it empty.`
+                            : `Suggest generic categories like "Dining Out", "Groceries", "Transportation", "Entertainment", "Shopping".`}
                     ` }
             ],
             expectedOutputs: [
@@ -264,8 +309,11 @@ function createReceiptCard(fileName, optimizedBlob, displayUrl, originalFile, au
                 <div class="suggestion-chips amounts-chips"></div>
             </div>
             <div class="field-group">
-                <label>Category (Suggestion)</label>
-                <input type="text" class="edit-input category-input" placeholder="Suggested category...">
+                <label>Category</label>
+                <input type="text" class="edit-input category-input" placeholder="Category..." list="category-list-${cardCounter}">
+                <datalist id="category-list-${cardCounter}">
+                    ${ynabCategories.map(c => `<option value="${c.name}">${c.group}: ${c.name}</option>`).join('')}
+                </datalist>
                 <div class="suggestion-chips categories-chips"></div>
             </div>
         </div>
@@ -508,10 +556,24 @@ async function pushToYNAB(card, fileName) {
     const merchant = card.querySelector('.merchant-input').value;
     const date = card.querySelector('.date-input').value;
     const amountVal = card.querySelector('.amount-input').value;
+    const categoryName = card.querySelector('.category-input').value;
 
     if (!merchant || !date || !amountVal) {
         showToast('Please verify all fields before pushing.', 'error');
         return;
+    }
+
+    // Resolve Category ID
+    let categoryId = null;
+    if (categoryName) {
+        const match = ynabCategories.find(c => c.name === categoryName);
+        if (match) {
+            categoryId = match.id;
+        } else if (ynabCategories.length > 0) {
+            // If we have categories loaded but user typed something else
+            showToast(`Category "${categoryName}" not found in YNAB. Please select a valid category.`, 'error');
+            return;
+        }
     }
 
     const amount = parseInt(amountVal) * 1000; // JPY Amount * 1000 for YNAB milliunits
@@ -522,6 +584,7 @@ async function pushToYNAB(card, fileName) {
             date: date,
             amount: -Math.abs(amount), // Outflow
             payee_name: merchant,
+            category_id: categoryId,
             cleared: 'cleared'
         }
     };
