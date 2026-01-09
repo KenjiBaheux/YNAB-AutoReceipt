@@ -162,19 +162,21 @@ async function processReceipt(fileHandle) {
     const fileName = fileHandle.name;
 
     // Preprocess image (crop whitespace)
-    let optimizedBlob, optimizedUrl;
+    let optimizedBlob, optimizedUrl, autoBounds;
     try {
         const optimized = await optimizeImageForAI(file);
         optimizedBlob = optimized.blob;
         optimizedUrl = optimized.url;
+        autoBounds = optimized.bounds;
     } catch (err) {
         console.warn('Image optimization failed, using original:', err);
         optimizedBlob = file;
         optimizedUrl = URL.createObjectURL(file);
+        autoBounds = null; // Signal full image
     }
 
     // Create UI Card
-    const card = createReceiptCard(fileName, optimizedBlob, optimizedUrl);
+    const card = createReceiptCard(fileName, optimizedBlob, optimizedUrl, file, autoBounds);
     if (DOM.receiptList.querySelector('.empty-state')) {
         DOM.receiptList.innerHTML = '';
     }
@@ -219,11 +221,16 @@ async function runAIExtraction(imageBlob, card, fileName) {
 // --- UI Helpers ---
 let cardCounter = 0;
 
-function createReceiptCard(fileName, fileBlob, displayUrl) {
+function createReceiptCard(fileName, optimizedBlob, displayUrl, originalFile, autoBounds) {
     cardCounter++;
     const card = document.createElement('div');
     card.className = 'receipt-card';
     card.id = `receipt-${cardCounter}`;
+    card.dataset.bounds = JSON.stringify(autoBounds);
+
+    // Store original URL as well
+    const originalUrl = URL.createObjectURL(originalFile);
+    card.dataset.originalUrl = originalUrl;
 
     card.innerHTML = `
         <div class="receipt-preview-container" title="Click to enlarge">
@@ -263,18 +270,29 @@ function createReceiptCard(fileName, fileBlob, displayUrl) {
 
     // Modal logic
     card.querySelector('.receipt-preview-container').addEventListener('click', () => {
-        activeRedactionCard = { card, fileName, file: fileBlob };
+        activeRedactionCard = {
+            card,
+            fileName,
+            file: originalFile,
+            optimizedBlob,
+            bounds: card.dataset.bounds ? JSON.parse(card.dataset.bounds) : null
+        };
         const modal = document.getElementById('full-view-modal');
         const modalImg = document.getElementById('full-receipt-img');
         modal.style.display = 'block';
-        modalImg.src = displayUrl;
+        modalImg.src = card.dataset.originalUrl;
         modalImg.classList.remove('zoomed'); // Reset zoom on open
         document.body.classList.add('modal-open');
+
+        // Always show Retry button when modal is open
+        document.getElementById('btn-retry-ai').style.display = 'block';
+
+        // Setup Cropping Visualization
+        setupCroppingUI(modalImg, activeRedactionCard.bounds);
 
         // Reset redaction tool
         document.getElementById('full-view-modal').classList.remove('redact-mode');
         document.getElementById('btn-clear-redaction').style.display = 'none';
-        document.getElementById('btn-retry-ai').style.display = 'none';
         clearRedactionCanvas();
     });
 
@@ -584,8 +602,10 @@ function showToast(message, type = 'info') {
 function closeModal() {
     const modal = document.getElementById('full-view-modal');
     const modalImg = document.getElementById('full-receipt-img');
+    const cropBox = document.getElementById('crop-box');
     modal.style.display = 'none';
     modalImg.classList.remove('zoomed');
+    cropBox.style.display = 'none';
     document.body.classList.remove('modal-open');
     activeRedactionCard = null;
 }
@@ -622,7 +642,14 @@ document.getElementById('btn-redact-mode').addEventListener('click', (e) => {
     const modal = document.getElementById('full-view-modal');
     const isActive = modal.classList.toggle('redact-mode');
     document.getElementById('btn-clear-redaction').style.display = isActive ? 'block' : 'none';
-    document.getElementById('btn-retry-ai').style.display = isActive ? 'block' : 'none';
+    // Retry AI button remains visible as it's useful for both redaction and cropping
+    document.getElementById('btn-retry-ai').style.display = 'block';
+
+    // Toggle crop box visibility when in redact mode?
+    // Actually, user might want to see both, but crosshair is for redaction.
+    // Let's hide crop box when redacting to avoid confusion.
+    document.getElementById('crop-box').style.display = isActive ? 'none' : 'block';
+
     if (isActive) setupRedactionCanvas();
 });
 
@@ -680,9 +707,19 @@ document.getElementById('btn-retry-ai').addEventListener('click', async (e) => {
     indicator.style.display = 'flex';
 
     try {
-        const redactedBlob = await captureRedactedImage();
-        await runAIExtraction(redactedBlob, activeRedactionCard.card, activeRedactionCard.fileName);
-        showToast('AI re-processed with redactions!', 'success');
+        const processedBlob = await captureProcessedImage();
+        // Update the card's optimizedBlob and displayUrl
+        const newUrl = URL.createObjectURL(processedBlob);
+        activeRedactionCard.optimizedBlob = processedBlob;
+
+        // Update the thumbnail
+        activeRedactionCard.card.querySelector('.receipt-preview').src = newUrl;
+
+        // Update the dataset bounds so subsequent opens remember the new crop
+        activeRedactionCard.card.dataset.bounds = JSON.stringify(activeRedactionCard.bounds);
+
+        await runAIExtraction(processedBlob, activeRedactionCard.card, activeRedactionCard.fileName);
+        showToast('AI re-processed with new crop!', 'success');
         closeModal();
     } catch (err) {
         showToast('Retry failed: ' + err.message, 'error');
@@ -691,21 +728,31 @@ document.getElementById('btn-retry-ai').addEventListener('click', async (e) => {
     }
 });
 
-async function captureRedactedImage() {
+async function captureProcessedImage() {
     const img = document.getElementById('full-receipt-img');
-    const offscreen = document.createElement('canvas');
-    const oCtx = offscreen.getContext('2d');
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
 
-    offscreen.width = img.naturalWidth;
-    offscreen.height = img.naturalHeight;
+    const b = activeRedactionCard.bounds;
+    const cropWidth = b.right - b.left;
+    const cropHeight = b.bottom - b.top;
 
-    // Draw original image
-    oCtx.drawImage(img, 0, 0);
+    canvas.width = cropWidth;
+    canvas.height = cropHeight;
 
-    // Draw redactions scaled to original size
-    oCtx.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, img.naturalWidth, img.naturalHeight);
+    // Draw original image part
+    ctx.drawImage(img, b.left, b.top, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
 
-    return new Promise(resolve => offscreen.toBlob(resolve, 'image/jpeg', 0.9));
+    // If there were redactions on the redaction-canvas, they should be applied too
+    // But since we are showing original, we might need to map them back.
+    // Simplifying: if redactions exist, draw them on top. 
+    // Scale redaction canvas to original image size
+    const rCanvas = document.getElementById('redaction-canvas');
+    if (redactions.length > 0) {
+        ctx.drawImage(rCanvas, 0, 0, rCanvas.width, rCanvas.height, -b.left * (rCanvas.width / img.naturalWidth), -b.top * (rCanvas.height / img.naturalHeight), rCanvas.width, rCanvas.height);
+    }
+
+    return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
 }
 
 // Zoom gestures
@@ -713,8 +760,14 @@ const modalImg = document.getElementById('full-receipt-img');
 modalImg?.addEventListener('click', (e) => {
     if (document.getElementById('full-view-modal').classList.contains('redact-mode')) return;
     e.stopPropagation(); // Don't close modal when clicking image
-    modalImg.classList.toggle('zoomed');
-    setTimeout(setupRedactionCanvas, 350); // Recalculate canvas after zoom transistion
+    const isZoomed = modalImg.classList.toggle('zoomed');
+    setTimeout(() => {
+        setupRedactionCanvas();
+        // Trigger a re-layout of the cropping UI
+        if (activeRedactionCard && activeRedactionCard.bounds) {
+            setupCroppingUI(modalImg, activeRedactionCard.bounds);
+        }
+    }, 350);
 });
 
 modalImg?.addEventListener('contextmenu', (e) => {
@@ -737,6 +790,89 @@ window.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
         closeModal();
     }
+});
+
+// --- Interactive Cropping Logic ---
+let isCropDragging = false;
+let activeCropHandle = null;
+let cropStartX, cropStartY, cropStartBounds;
+
+function setupCroppingUI(img, bounds) {
+    const cropBox = document.getElementById('crop-box');
+    cropBox.style.display = 'block';
+
+    if (!bounds) {
+        bounds = { top: 0, left: 0, bottom: img.naturalHeight, right: img.naturalWidth };
+        activeRedactionCard.bounds = bounds;
+    }
+
+    const updateUI = () => {
+        const rect = img.getBoundingClientRect();
+        const scaleX = rect.width / img.naturalWidth;
+        const scaleY = rect.height / img.naturalHeight;
+
+        cropBox.style.top = `${bounds.top * scaleY}px`;
+        cropBox.style.left = `${bounds.left * scaleX}px`;
+        cropBox.style.width = `${(bounds.right - bounds.left) * scaleX}px`;
+        cropBox.style.height = `${(bounds.bottom - bounds.top) * scaleY}px`;
+    };
+
+    if (img.complete) updateUI();
+    else img.onload = updateUI;
+}
+
+// Global Crop Listeners (Added once)
+document.getElementById('crop-box').addEventListener('mousedown', (e) => {
+    if (document.getElementById('full-view-modal').classList.contains('redact-mode')) return;
+    e.stopPropagation();
+    isCropDragging = true;
+    activeCropHandle = e.target.dataset.handle;
+    cropStartX = e.clientX;
+    cropStartY = e.clientY;
+    cropStartBounds = { ...activeRedactionCard.bounds };
+});
+
+window.addEventListener('mousemove', (e) => {
+    if (!isCropDragging || !activeRedactionCard) return;
+
+    const img = document.getElementById('full-receipt-img');
+    const rect = img.getBoundingClientRect();
+    const scaleX = img.naturalWidth / rect.width;
+    const scaleY = img.naturalHeight / rect.height;
+
+    const dx = (e.clientX - cropStartX) * scaleX;
+    const dy = (e.clientY - cropStartY) * scaleY;
+
+    const b = activeRedactionCard.bounds;
+
+    if (!activeCropHandle) { // Moving
+        const w = cropStartBounds.right - cropStartBounds.left;
+        const h = cropStartBounds.bottom - cropStartBounds.top;
+        b.left = Math.max(0, Math.min(img.naturalWidth - w, cropStartBounds.left + dx));
+        b.top = Math.max(0, Math.min(img.naturalHeight - h, cropStartBounds.top + dy));
+        b.right = b.left + w;
+        b.bottom = b.top + h;
+    } else { // Resizing
+        if (activeCropHandle.includes('n')) b.top = Math.max(0, Math.min(cropStartBounds.bottom - 50, cropStartBounds.top + dy));
+        if (activeCropHandle.includes('s')) b.bottom = Math.min(img.naturalHeight, Math.max(cropStartBounds.top + 50, cropStartBounds.bottom + dy));
+        if (activeCropHandle.includes('w')) b.left = Math.max(0, Math.min(cropStartBounds.right - 50, cropStartBounds.left + dx));
+        if (activeCropHandle.includes('e')) b.right = Math.min(img.naturalWidth, Math.max(cropStartBounds.left + 50, cropStartBounds.right + dx));
+    }
+
+    setupCroppingUI(img, b);
+});
+
+window.addEventListener('mouseup', () => {
+    if (!isCropDragging) return;
+    isCropDragging = false;
+    activeCropHandle = null;
+
+    // Save current bounds to the card's dataset so they persist if modal is closed
+    if (activeRedactionCard && activeRedactionCard.card && activeRedactionCard.bounds) {
+        activeRedactionCard.card.dataset.bounds = JSON.stringify(activeRedactionCard.bounds);
+    }
+
+    setupRedactionCanvas(); // Sync redaction canvas if needed
 });
 
 // Start the app

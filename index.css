@@ -482,6 +482,96 @@ h2 {
     max-width: 100%;
 }
 
+/* Cropping UI */
+.crop-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    pointer-events: none;
+    z-index: 2002;
+    clip-path: polygon(0% 0%, 0% 100%,
+            var(--crop-left) 100%, var(--crop-left) var(--crop-top),
+            var(--crop-right) var(--crop-top), var(--crop-right) var(--crop-bottom),
+            var(--crop-left) var(--crop-bottom), var(--crop-left) 100%,
+            100% 100%, 100% 0%);
+}
+
+.crop-box {
+    position: absolute;
+    border: 2px solid var(--accent-primary);
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+    z-index: 2003;
+    pointer-events: auto;
+    cursor: move;
+}
+
+.crop-handle {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    background: #fff;
+    border: 2px solid var(--accent-primary);
+    border-radius: 50%;
+    z-index: 2004;
+    transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.crop-handle:hover {
+    transform: scale(1.3);
+    background: var(--accent-primary);
+}
+
+.handle-nw {
+    top: -6px;
+    left: -6px;
+    cursor: nw-resize;
+}
+
+.handle-n {
+    top: -6px;
+    left: calc(50% - 6px);
+    cursor: n-resize;
+}
+
+.handle-ne {
+    top: -6px;
+    right: -6px;
+    cursor: ne-resize;
+}
+
+.handle-e {
+    top: calc(50% - 6px);
+    right: -6px;
+    cursor: e-resize;
+}
+
+.handle-se {
+    bottom: -6px;
+    right: -6px;
+    cursor: se-resize;
+}
+
+.handle-s {
+    bottom: -6px;
+    left: calc(50% - 6px);
+    cursor: s-resize;
+}
+
+.handle-sw {
+    bottom: -6px;
+    left: -6px;
+    cursor: sw-resize;
+}
+
+.handle-w {
+    top: calc(50% - 6px);
+    left: -6px;
+    cursor: w-resize;
+}
+
 #redaction-canvas {
     position: absolute;
     top: 0;
