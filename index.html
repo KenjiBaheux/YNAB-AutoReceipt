@@ -77,9 +77,18 @@
         <div class="modal-content glass">
             <span class="close-modal">&times;</span>
             <div class="modal-toolbar">
-                <button id="btn-redact-mode" class="btn btn-small btn-dismiss">🪄 Magic Eraser</button>
-                <button id="btn-clear-redaction" class="btn btn-small btn-dismiss" style="display: none;">Clear</button>
-                <button id="btn-retry-ai" class="btn btn-small btn-push" style="display: none;">Retry AI</button>
+                <button id="btn-redact-mode" class="btn btn-secondary">
+                    <span class="icon">🖍️</span> Redact
+                </button>
+                <button id="btn-delete-redaction" class="btn btn-danger" style="display: none;">
+                    <span class="icon">🗑️</span> Delete Selected
+                </button>
+                <button id="btn-clear-redaction" class="btn btn-danger" style="display: none;">
+                    <span class="icon">✨</span> Clear All
+                </button>
+                <button id="btn-retry-ai" class="btn btn-primary">
+                    <span class="icon">🪄</span> Retry AI
+                </button>
                 <div id="retrying-indicator" class="status-indicator" style="display: none;">
                     <span class="dot loading"></span>
                     <span>Retrying...</span>
@@ -97,6 +106,7 @@
                     <div class="crop-handle handle-sw" data-handle="sw"></div>
                     <div class="crop-handle handle-w" data-handle="w"></div>
                 </div>
+                <div id="redactions-container" class="redactions-container"></div>
                 <canvas id="redaction-canvas"></canvas>
             </div>
         </div>

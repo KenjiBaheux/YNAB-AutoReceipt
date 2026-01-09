@@ -299,10 +299,13 @@ function createReceiptCard(fileName, optimizedBlob, displayUrl, originalFile, au
 
         // Setup Redactions
         redactions = [...activeRedactionCard.redactions];
+        renderRedactions();
+        updateModalToolbar();
+
         if (modal.classList.contains('redact-mode')) {
             setupRedactionCanvas();
         } else {
-            clearRedactionCanvas(); // Will be redrawn if mode switched
+            clearRedactionCanvas();
         }
     });
 
@@ -600,6 +603,70 @@ function findContentBounds(imageData) {
     return { top, bottom, left, right };
 }
 
+function updateModalToolbar() {
+    const modal = document.getElementById('full-view-modal');
+    const isRedactMode = modal.classList.contains('redact-mode');
+    document.getElementById('btn-delete-redaction').style.display = (isRedactMode && selectedRedactionIndex !== -1) ? 'block' : 'none';
+    document.getElementById('btn-clear-redaction').style.display = (isRedactMode && redactions.length > 0) ? 'block' : 'none';
+}
+
+function renderRedactions() {
+    const container = document.getElementById('redactions-container');
+    container.innerHTML = '';
+    const img = document.getElementById('full-receipt-img');
+    const rect = img.getBoundingClientRect();
+    const scaleX = rect.width / img.naturalWidth;
+    const scaleY = rect.height / img.naturalHeight;
+
+    redactions.forEach((r, index) => {
+        const div = document.createElement('div');
+        div.className = `redaction-block ${index === selectedRedactionIndex ? 'selected' : ''}`;
+        div.style.left = `${r.x * scaleX}px`;
+        div.style.top = `${r.y * scaleY}px`;
+        div.style.width = `${r.w * scaleX}px`;
+        div.style.height = `${r.h * scaleY}px`;
+
+        if (index === selectedRedactionIndex) {
+            // Add handles for selected block
+            const handles = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+            handles.forEach(h => {
+                const handle = document.createElement('div');
+                handle.className = `crop-handle handle-${h}`;
+                handle.dataset.handle = h;
+                div.appendChild(handle);
+            });
+        }
+
+        div.addEventListener('mousedown', (e) => {
+            if (!document.getElementById('full-view-modal').classList.contains('redact-mode')) return;
+            e.stopPropagation();
+            selectedRedactionIndex = index;
+            renderRedactions();
+            updateModalToolbar();
+
+            // Start drag logic
+            startBoxInteraction(e, 'redaction', index);
+        });
+
+        container.appendChild(div);
+    });
+}
+
+function startBoxInteraction(e, type, index = -1) {
+    isBoxDragging = true;
+    interactionType = type;
+    interactionIndex = index;
+    activeHandle = e.target.dataset.handle;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+
+    if (type === 'crop') {
+        initialBoxRect = { ...activeRedactionCard.bounds };
+    } else {
+        initialBoxRect = { ...redactions[index] };
+    }
+}
+
 // --- Utilities ---
 function showToast(message, type = 'info') {
     const toast = document.createElement('div');
@@ -638,6 +705,13 @@ const ctx = canvas.getContext('2d');
 let isDrawing = false;
 let startX, startY;
 let redactions = []; // Store rectangles: {x, y, w, h}
+let selectedRedactionIndex = -1;
+let isBoxDragging = false;
+let activeHandle = null;
+let dragStartX, dragStartY;
+let initialBoxRect = null;
+let interactionType = 'crop'; // 'crop' or 'redaction'
+let interactionIndex = -1;
 
 function setupRedactionCanvas() {
     const img = document.getElementById('full-receipt-img');
@@ -668,20 +742,34 @@ document.getElementById('btn-redact-mode').addEventListener('click', (e) => {
     e.stopPropagation();
     const modal = document.getElementById('full-view-modal');
     const isActive = modal.classList.toggle('redact-mode');
-    document.getElementById('btn-clear-redaction').style.display = isActive ? 'block' : 'none';
-    // Retry AI button remains visible as it's useful for both redaction and cropping
-    document.getElementById('btn-retry-ai').style.display = 'block';
 
-    // Toggle crop box visibility when in redact mode?
-    // Actually, user might want to see both, but crosshair is for redaction.
-    // Let's hide crop box when redacting to avoid confusion.
-    document.getElementById('crop-box').style.display = isActive ? 'none' : 'block';
+    // Deselect any selected redaction when toggling modes
+    if (!isActive) {
+        selectedRedactionIndex = -1;
+    }
+
+    updateModalToolbar();
+    renderRedactions();
 
     if (isActive) setupRedactionCanvas();
 });
 
+document.getElementById('btn-delete-redaction').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (selectedRedactionIndex !== -1) {
+        redactions.splice(selectedRedactionIndex, 1);
+        selectedRedactionIndex = -1;
+        renderRedactions();
+        updateModalToolbar();
+    }
+});
+
 document.getElementById('btn-clear-redaction').addEventListener('click', (e) => {
     e.stopPropagation();
+    redactions = [];
+    selectedRedactionIndex = -1;
+    renderRedactions();
+    updateModalToolbar();
     clearRedactionCanvas();
 });
 
@@ -728,6 +816,8 @@ window.addEventListener('mouseup', (e) => {
 
     if (Math.abs(w) > 5 && Math.abs(h) > 5) {
         redactions.push({ x, y, w, h });
+        renderRedactions();
+        updateModalToolbar();
     }
 
     redrawRedactions();
@@ -835,10 +925,6 @@ window.addEventListener('keydown', (event) => {
 });
 
 // --- Interactive Cropping Logic ---
-let isCropDragging = false;
-let activeCropHandle = null;
-let cropStartX, cropStartY, cropStartBounds;
-
 function setupCroppingUI(img, bounds) {
     const cropBox = document.getElementById('crop-box');
     cropBox.style.display = 'block';
@@ -867,47 +953,79 @@ function setupCroppingUI(img, bounds) {
 document.getElementById('crop-box').addEventListener('mousedown', (e) => {
     if (document.getElementById('full-view-modal').classList.contains('redact-mode')) return;
     e.stopPropagation();
-    isCropDragging = true;
-    activeCropHandle = e.target.dataset.handle;
-    cropStartX = e.clientX;
-    cropStartY = e.clientY;
-    cropStartBounds = { ...activeRedactionCard.bounds };
+    startBoxInteraction(e, 'crop');
 });
 
 window.addEventListener('mousemove', (e) => {
-    if (!isCropDragging || !activeRedactionCard) return;
+    if (!isBoxDragging) return;
 
     const img = document.getElementById('full-receipt-img');
     const rect = img.getBoundingClientRect();
     const scaleX = img.naturalWidth / rect.width;
     const scaleY = img.naturalHeight / rect.height;
 
-    const dx = (e.clientX - cropStartX) * scaleX;
-    const dy = (e.clientY - cropStartY) * scaleY;
+    const dx = (e.clientX - dragStartX) * scaleX;
+    const dy = (e.clientY - dragStartY) * scaleY;
 
-    const b = activeRedactionCard.bounds;
-
-    if (!activeCropHandle) { // Moving
-        const w = cropStartBounds.right - cropStartBounds.left;
-        const h = cropStartBounds.bottom - cropStartBounds.top;
-        b.left = Math.max(0, Math.min(img.naturalWidth - w, cropStartBounds.left + dx));
-        b.top = Math.max(0, Math.min(img.naturalHeight - h, cropStartBounds.top + dy));
-        b.right = b.left + w;
-        b.bottom = b.top + h;
-    } else { // Resizing
-        if (activeCropHandle.includes('n')) b.top = Math.max(0, Math.min(cropStartBounds.bottom - 50, cropStartBounds.top + dy));
-        if (activeCropHandle.includes('s')) b.bottom = Math.min(img.naturalHeight, Math.max(cropStartBounds.top + 50, cropStartBounds.bottom + dy));
-        if (activeCropHandle.includes('w')) b.left = Math.max(0, Math.min(cropStartBounds.right - 50, cropStartBounds.left + dx));
-        if (activeCropHandle.includes('e')) b.right = Math.min(img.naturalWidth, Math.max(cropStartBounds.left + 50, cropStartBounds.right + dx));
+    // Get the target box (either crop bounds or redaction rect)
+    let b;
+    if (interactionType === 'crop') {
+        b = activeRedactionCard.bounds;
+    } else {
+        b = redactions[interactionIndex];
     }
 
-    setupCroppingUI(img, b);
+    if (!activeHandle) { // Moving
+        const w = initialBoxRect.right - initialBoxRect.left || initialBoxRect.w;
+        const h = initialBoxRect.bottom - initialBoxRect.top || initialBoxRect.h;
+
+        if (interactionType === 'crop') {
+            b.left = Math.max(0, Math.min(img.naturalWidth - w, initialBoxRect.left + dx));
+            b.top = Math.max(0, Math.min(img.naturalHeight - h, initialBoxRect.top + dy));
+            b.right = b.left + w;
+            b.bottom = b.top + h;
+        } else {
+            b.x = Math.max(0, Math.min(img.naturalWidth - w, initialBoxRect.x + dx));
+            b.y = Math.max(0, Math.min(img.naturalHeight - h, initialBoxRect.y + dy));
+        }
+    } else { // Resizing
+        if (interactionType === 'crop') {
+            if (activeHandle.includes('n')) b.top = Math.max(0, Math.min(initialBoxRect.bottom - 50, initialBoxRect.top + dy));
+            if (activeHandle.includes('s')) b.bottom = Math.min(img.naturalHeight, Math.max(initialBoxRect.top + 50, initialBoxRect.bottom + dy));
+            if (activeHandle.includes('w')) b.left = Math.max(0, Math.min(initialBoxRect.right - 50, initialBoxRect.left + dx));
+            if (activeHandle.includes('e')) b.right = Math.min(img.naturalWidth, Math.max(initialBoxRect.left + 50, initialBoxRect.right + dx));
+        } else {
+            if (activeHandle.includes('n')) {
+                const newTop = Math.max(0, Math.min(initialBoxRect.y + initialBoxRect.h - 50, initialBoxRect.y + dy));
+                b.h = initialBoxRect.h + (initialBoxRect.y - newTop);
+                b.y = newTop;
+            }
+            if (activeHandle.includes('s')) {
+                b.h = Math.max(50, Math.min(img.naturalHeight - initialBoxRect.y, initialBoxRect.h + dy));
+            }
+            if (activeHandle.includes('w')) {
+                const newLeft = Math.max(0, Math.min(initialBoxRect.x + initialBoxRect.w - 50, initialBoxRect.x + dx));
+                b.w = initialBoxRect.w + (initialBoxRect.x - newLeft);
+                b.x = newLeft;
+            }
+            if (activeHandle.includes('e')) {
+                b.w = Math.max(50, Math.min(img.naturalWidth - initialBoxRect.x, initialBoxRect.w + dx));
+            }
+        }
+    }
+
+    // Update UI
+    if (interactionType === 'crop') {
+        setupCroppingUI(img, b);
+    } else {
+        renderRedactions();
+    }
 });
 
 window.addEventListener('mouseup', (e) => {
-    if (!isCropDragging) return;
-    isCropDragging = false;
-    activeCropHandle = null;
+    if (!isBoxDragging) return;
+    isBoxDragging = false;
+    activeHandle = null;
 
     setupRedactionCanvas(); // Sync redaction canvas if needed
 });
