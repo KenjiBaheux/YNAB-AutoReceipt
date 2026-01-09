@@ -227,6 +227,7 @@ function createReceiptCard(fileName, optimizedBlob, displayUrl, originalFile, au
     card.className = 'receipt-card';
     card.id = `receipt-${cardCounter}`;
     card.dataset.bounds = JSON.stringify(autoBounds);
+    card.dataset.redactions = JSON.stringify([]);
 
     // Store original URL as well
     const originalUrl = URL.createObjectURL(originalFile);
@@ -270,12 +271,18 @@ function createReceiptCard(fileName, optimizedBlob, displayUrl, originalFile, au
 
     // Modal logic
     card.querySelector('.receipt-preview-container').addEventListener('click', () => {
+        const currentBounds = card.dataset.bounds ? JSON.parse(card.dataset.bounds) : null;
+        const currentRedactions = card.dataset.redactions ? JSON.parse(card.dataset.redactions) : [];
+
         activeRedactionCard = {
             card,
             fileName,
             file: originalFile,
             optimizedBlob,
-            bounds: card.dataset.bounds ? JSON.parse(card.dataset.bounds) : null
+            bounds: currentBounds ? { ...currentBounds } : null,
+            redactions: [...currentRedactions],
+            initialBounds: currentBounds ? { ...currentBounds } : null,
+            initialRedactions: [...currentRedactions]
         };
         const modal = document.getElementById('full-view-modal');
         const modalImg = document.getElementById('full-receipt-img');
@@ -290,10 +297,13 @@ function createReceiptCard(fileName, optimizedBlob, displayUrl, originalFile, au
         // Setup Cropping Visualization
         setupCroppingUI(modalImg, activeRedactionCard.bounds);
 
-        // Reset redaction tool
-        document.getElementById('full-view-modal').classList.remove('redact-mode');
-        document.getElementById('btn-clear-redaction').style.display = 'none';
-        clearRedactionCanvas();
+        // Setup Redactions
+        redactions = [...activeRedactionCard.redactions];
+        if (modal.classList.contains('redact-mode')) {
+            setupRedactionCanvas();
+        } else {
+            clearRedactionCanvas(); // Will be redrawn if mode switched
+        }
     });
 
     card.querySelector('.btn-push').addEventListener('click', () => pushToYNAB(card, fileName));
@@ -306,6 +316,7 @@ function createReceiptCard(fileName, optimizedBlob, displayUrl, originalFile, au
 }
 
 function updateReceiptCard(card, data) {
+    card.classList.remove('processing');
     // Deduplicate candidates while preserving order and normalizing
     const dedupe = (arr) => {
         const seen = new Set();
@@ -599,7 +610,16 @@ function showToast(message, type = 'info') {
 }
 
 // --- Global Modal Listeners ---
-function closeModal() {
+function closeModal(isApplying = false) {
+    if (isApplying && activeRedactionCard) {
+        // Commit changes to the card dataset
+        activeRedactionCard.card.dataset.bounds = JSON.stringify(activeRedactionCard.bounds);
+        activeRedactionCard.card.dataset.redactions = JSON.stringify(redactions);
+
+        // Start background extraction
+        runBackgroundExtraction(activeRedactionCard.card, activeRedactionCard.file, activeRedactionCard.fileName);
+    }
+
     const modal = document.getElementById('full-view-modal');
     const modalImg = document.getElementById('full-receipt-img');
     const cropBox = document.getElementById('crop-box');
@@ -608,7 +628,9 @@ function closeModal() {
     cropBox.style.display = 'none';
     document.body.classList.remove('modal-open');
     activeRedactionCard = null;
+    redactions = [];
 }
+
 
 // Redaction Logic
 const canvas = document.getElementById('redaction-canvas');
@@ -632,8 +654,13 @@ function clearRedactionCanvas() {
 function redrawRedactions() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = 'black';
+
+    const img = document.getElementById('full-receipt-img');
+    const scaleX = canvas.width / img.naturalWidth;
+    const scaleY = canvas.height / img.naturalHeight;
+
     redactions.forEach(rect => {
-        ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+        ctx.fillRect(rect.x * scaleX, rect.y * scaleY, rect.w * scaleX, rect.h * scaleY);
     });
 }
 
@@ -689,70 +716,85 @@ window.addEventListener('mouseup', (e) => {
     const endX = e.clientX - rect.left;
     const endY = e.clientY - rect.top;
 
-    const w = endX - startX;
-    const h = endY - startY;
+    // Scale back to original image coordinates for storage
+    const img = document.getElementById('full-receipt-img');
+    const scaleX = img.naturalWidth / canvas.width;
+    const scaleY = img.naturalHeight / canvas.height;
+
+    const w = (endX - startX) * scaleX;
+    const h = (endY - startY) * scaleY;
+    const x = startX * scaleX;
+    const y = startY * scaleY;
 
     if (Math.abs(w) > 5 && Math.abs(h) > 5) {
-        redactions.push({ x: startX, y: startY, w, h });
+        redactions.push({ x, y, w, h });
     }
 
     redrawRedactions();
 });
 
-document.getElementById('btn-retry-ai').addEventListener('click', async (e) => {
+document.getElementById('btn-retry-ai').addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!activeRedactionCard) return;
-
-    const indicator = document.getElementById('retrying-indicator');
-    indicator.style.display = 'flex';
-
-    try {
-        const processedBlob = await captureProcessedImage();
-        // Update the card's optimizedBlob and displayUrl
-        const newUrl = URL.createObjectURL(processedBlob);
-        activeRedactionCard.optimizedBlob = processedBlob;
-
-        // Update the thumbnail
-        activeRedactionCard.card.querySelector('.receipt-preview').src = newUrl;
-
-        // Update the dataset bounds so subsequent opens remember the new crop
-        activeRedactionCard.card.dataset.bounds = JSON.stringify(activeRedactionCard.bounds);
-
-        await runAIExtraction(processedBlob, activeRedactionCard.card, activeRedactionCard.fileName);
-        showToast('AI re-processed with new crop!', 'success');
-        closeModal();
-    } catch (err) {
-        showToast('Retry failed: ' + err.message, 'error');
-    } finally {
-        indicator.style.display = 'none';
-    }
+    closeModal(true); // Apply and retry in background
 });
 
-async function captureProcessedImage() {
-    const img = document.getElementById('full-receipt-img');
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
+async function runBackgroundExtraction(card, originalFile, fileName) {
+    card.classList.add('processing');
+    try {
+        const bounds = JSON.parse(card.dataset.bounds);
+        const savedRedactions = JSON.parse(card.dataset.redactions);
 
-    const b = activeRedactionCard.bounds;
-    const cropWidth = b.right - b.left;
-    const cropHeight = b.bottom - b.top;
+        const processedBlob = await captureProcessedImageForCard(originalFile, bounds, savedRedactions);
 
-    canvas.width = cropWidth;
-    canvas.height = cropHeight;
+        // Update the thumbnail
+        const newUrl = URL.createObjectURL(processedBlob);
+        card.querySelector('.receipt-preview').src = newUrl;
 
-    // Draw original image part
-    ctx.drawImage(img, b.left, b.top, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
-
-    // If there were redactions on the redaction-canvas, they should be applied too
-    // But since we are showing original, we might need to map them back.
-    // Simplifying: if redactions exist, draw them on top. 
-    // Scale redaction canvas to original image size
-    const rCanvas = document.getElementById('redaction-canvas');
-    if (redactions.length > 0) {
-        ctx.drawImage(rCanvas, 0, 0, rCanvas.width, rCanvas.height, -b.left * (rCanvas.width / img.naturalWidth), -b.top * (rCanvas.height / img.naturalHeight), rCanvas.width, rCanvas.height);
+        await runAIExtraction(processedBlob, card, fileName);
+        showToast('Background extraction completed!', 'success');
+    } catch (err) {
+        console.error('Background extraction failed:', err);
+        showToast('Auto-retry failed: ' + err.message, 'error');
+        card.classList.remove('processing');
     }
+}
 
-    return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+async function captureProcessedImageForCard(originalFile, bounds, savedRedactions) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            URL.revokeObjectURL(img.src);
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            const b = bounds || { top: 0, left: 0, bottom: img.height, right: img.width };
+            const cropWidth = b.right - b.left;
+            const cropHeight = b.bottom - b.top;
+
+            canvas.width = cropWidth;
+            canvas.height = cropHeight;
+
+            // Draw original image part
+            ctx.drawImage(img, b.left, b.top, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+
+            // Apply redactions
+            if (savedRedactions && savedRedactions.length > 0) {
+                ctx.fillStyle = 'black';
+                savedRedactions.forEach(rect => {
+                    const rx = rect.x - b.left;
+                    const ry = rect.y - b.top;
+                    ctx.fillRect(rx, ry, rect.w, rect.h);
+                });
+            }
+
+            canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.9);
+        };
+        img.onerror = (err) => {
+            URL.revokeObjectURL(img.src);
+            reject(err);
+        };
+        img.src = URL.createObjectURL(originalFile);
+    });
 }
 
 // Zoom gestures
@@ -777,18 +819,18 @@ modalImg?.addEventListener('contextmenu', (e) => {
     }
 });
 
-document.querySelector('.close-modal')?.addEventListener('click', closeModal);
+document.querySelector('.close-modal')?.addEventListener('click', () => closeModal(false));
 
 window.addEventListener('click', (event) => {
     const modal = document.getElementById('full-view-modal');
     if (event.target === modal) {
-        closeModal();
+        closeModal(false);
     }
 });
 
 window.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
-        closeModal();
+        closeModal(false);
     }
 });
 
@@ -862,15 +904,10 @@ window.addEventListener('mousemove', (e) => {
     setupCroppingUI(img, b);
 });
 
-window.addEventListener('mouseup', () => {
+window.addEventListener('mouseup', (e) => {
     if (!isCropDragging) return;
     isCropDragging = false;
     activeCropHandle = null;
-
-    // Save current bounds to the card's dataset so they persist if modal is closed
-    if (activeRedactionCard && activeRedactionCard.card && activeRedactionCard.bounds) {
-        activeRedactionCard.card.dataset.bounds = JSON.stringify(activeRedactionCard.bounds);
-    }
 
     setupRedactionCanvas(); // Sync redaction canvas if needed
 });
