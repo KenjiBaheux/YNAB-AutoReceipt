@@ -21,6 +21,8 @@ const DOM = {
     budgetId: document.getElementById('ynab-budget-id'),
     accountId: document.getElementById('ynab-account-id'),
     btnSync: document.getElementById('btn-sync-folder'),
+    btnPushAll: document.getElementById('btn-push-all'),
+    progressCounter: document.getElementById('progress-counter'),
     aiStatus: document.getElementById('ai-status'),
     receiptList: document.getElementById('receipt-list'),
     processedCount: document.getElementById('processed-count'),
@@ -43,6 +45,7 @@ async function init() {
 
     await checkAIAvailability();
     DOM.btnSync.addEventListener('click', handleFolderSync);
+    DOM.btnPushAll.addEventListener('click', pushAllToYNAB);
 }
 
 // --- AI Logic ---
@@ -102,6 +105,9 @@ async function warmUpAI() {
                     - **Merchant**: Usually at the very top. It's often followed by an address or phone number. Do not confuse generic terms like "領収書" (Receipt) with the vendor name.
                     - **Category**: Suggest possible YNAB categories (e.g., Dining Out, Groceries, Transportation, Entertainment, Shopping).
                     ` }
+            ],
+            expectedOutputs: [
+                { type: "text", languages: ["ja"] }
             ]
         });
 
@@ -320,6 +326,7 @@ function createReceiptCard(fileName, optimizedBlob, displayUrl, originalFile, au
 
 function updateReceiptCard(card, data) {
     card.classList.remove('processing');
+    updateProgressCounter(); // Update the analysis progress counter
     // Deduplicate candidates while preserving order and normalizing
     const dedupe = (arr) => {
         const seen = new Set();
@@ -357,6 +364,78 @@ function updateReceiptCard(card, data) {
     renderChips(card.querySelector('.categories-chips'), categories, val => {
         card.querySelector('.category-input').value = val;
     });
+}
+
+function updateProgressCounter() {
+    const allCards = Array.from(DOM.receiptList.querySelectorAll('.receipt-card'));
+    const total = allCards.length;
+    const analyzed = allCards.filter(card => !card.classList.contains('processing')).length;
+
+    if (total === 0) {
+        DOM.progressCounter.style.display = 'none';
+        DOM.btnPushAll.disabled = true;
+        return;
+    }
+
+    DOM.progressCounter.style.display = 'flex';
+    DOM.progressCounter.querySelector('.progress-text').textContent = `Analyzed ${analyzed}/${total}...`;
+
+    // Enable Push All button if at least one receipt is analyzed
+    DOM.btnPushAll.disabled = analyzed === 0;
+}
+
+async function pushAllToYNAB() {
+    const allCards = Array.from(DOM.receiptList.querySelectorAll('.receipt-card'));
+    const readyCards = allCards.filter(card => {
+        const pushBtn = card.querySelector('.btn-push');
+        return !card.classList.contains('processing') && !pushBtn.disabled;
+    });
+
+    if (readyCards.length === 0) {
+        showToast('No receipts ready to push', 'info');
+        return;
+    }
+
+    // Disable the Push All button during operation
+    DOM.btnPushAll.disabled = true;
+
+    // Disable all individual push buttons to prevent interference
+    const allPushBtns = Array.from(DOM.receiptList.querySelectorAll('.btn-push'));
+    allPushBtns.forEach(btn => btn.disabled = true);
+
+    let successCount = 0;
+    let errorCount = 0;
+    const total = readyCards.length;
+
+    for (let i = 0; i < readyCards.length; i++) {
+        const card = readyCards[i];
+        const fileName = card.querySelector('.merchant-input').placeholder || 'receipt';
+
+        // Update progress
+        DOM.progressCounter.querySelector('.progress-text').textContent = `Pushing ${i + 1}/${total}...`;
+
+        try {
+            await pushToYNAB(card, fileName);
+            successCount++;
+        } catch (err) {
+            console.error(`Failed to push ${fileName}:`, err);
+            errorCount++;
+        }
+    }
+
+    // Show final summary
+    if (errorCount === 0) {
+        showToast(`Successfully pushed ${successCount} receipt${successCount !== 1 ? 's' : ''} to YNAB!`, 'success');
+    } else {
+        showToast(`Pushed ${successCount}/${total} receipts (${errorCount} failed)`, 'error');
+    }
+
+    // Re-enable remaining push buttons
+    const remainingPushBtns = Array.from(DOM.receiptList.querySelectorAll('.btn-push'));
+    remainingPushBtns.forEach(btn => btn.disabled = false);
+
+    // Restore analysis progress counter
+    updateProgressCounter();
 }
 
 function renderChips(container, values, onSelect) {
@@ -447,6 +526,10 @@ async function pushToYNAB(card, fileName) {
         }
     };
 
+    const pushBtn = card.querySelector('.btn-push');
+    pushBtn.disabled = true;
+    pushBtn.textContent = '⏳';
+
     try {
         const response = await fetch(`https://api.ynab.com/v1/budgets/${budgetId}/transactions`, {
             method: 'POST',
@@ -467,9 +550,12 @@ async function pushToYNAB(card, fileName) {
         setTimeout(() => {
             card.remove();
             markAsProcessed(fileName);
+            updateProgressCounter(); // Update progress when a card is removed
         }, 500);
     } catch (err) {
         showToast(err.message, 'error');
+        pushBtn.disabled = false;
+        pushBtn.innerHTML = '<span class="icon">💰</span> Push to YNAB';
     }
 }
 

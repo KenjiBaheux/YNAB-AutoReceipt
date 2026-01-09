@@ -250,6 +250,23 @@ input:focus {
     }
 }
 
+.progress-counter {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--glass-border);
+    border-radius: 10px;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.progress-counter .progress-text {
+    font-weight: 500;
+    color: var(--accent-primary);
+}
+
 /* Receipts Explorer */
 .explorer-header {
     display: flex;
