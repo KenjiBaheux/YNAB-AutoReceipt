@@ -1,0 +1,13 @@
+:root {
+    --bg-color: #0b0e14;
+    --glass-bg: rgba(255, 255, 255, 0.03);
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --accent-primary: #00e5ff;
+    --accent-secondary: #7000ff;
+    --text-main: #f0f2f5;
+    --text-muted: #9ba1a6;
+    --success: #00f2a1;
+    --error: #ff4d4d;
+    --font-heading: 'Outfit', sans-serif;
+    --font-body: 'Inter', sans-serif;
+}

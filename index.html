@@ -5,12 +5,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>YNAB Receipt Porter</title>
-    <link rel="stylesheet" href="index.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Outfit:wght@400;700&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Inter:wght@300;400;500;600&display=swap"
         rel="stylesheet">
+    <link rel="stylesheet" href="css/main.css">
+    <!-- Inline prompt-api-proxy.js reference removed as we assume proper browser support or newer API usage -->
 </head>
 
 <body>
@@ -32,8 +33,8 @@
         <section class="controls glass">
             <div class="api-settings">
                 <div class="input-group">
-                    <label for="ynab-api-key">YNAB API Key</label>
-                    <input type="password" id="ynab-api-key" placeholder="Enter PAT...">
+                    <label for="ynab-api-pat">YNAB Personal Access Token</label>
+                    <input type="password" id="ynab-api-pat" placeholder="Enter PAT...">
                 </div>
                 <div class="input-group">
                     <label for="ynab-budget-id">Budget ID</label>
@@ -82,16 +83,19 @@
 
     <div id="full-view-modal" class="modal">
         <div class="modal-content glass">
-            <span class="close-modal">&times;</span>
+            <span id="btn-dismiss-modal" class="close-modal">&times;</span>
             <div class="modal-toolbar">
-                <button id="btn-redact-mode" class="btn btn-secondary">
+                <button id="btn-mode-crop" class="btn" title="Crop Mode">
+                    <span class="icon">✂️</span> Crop
+                </button>
+                <button id="btn-mode-redact" class="btn" title="Redact Mode">
                     <span class="icon">🖍️</span> Redact
                 </button>
                 <button id="btn-delete-redaction" class="btn btn-danger" style="display: none;">
-                    <span class="icon">🗑️</span> Delete Selected
+                    <span class="icon">🗑️</span> Delete
                 </button>
                 <button id="btn-clear-redaction" class="btn btn-danger" style="display: none;">
-                    <span class="icon">✨</span> Clear All
+                    <span class="icon">✨</span> Clear
                 </button>
                 <button id="btn-retry-ai" class="btn btn-primary">
                     <span class="icon">🪄</span> Retry AI
@@ -100,19 +104,11 @@
                     <span class="dot loading"></span>
                     <span>Retrying...</span>
                 </div>
+                <div class="spacer" style="flex: 1;"></div>
             </div>
             <div class="canvas-wrapper">
                 <img id="full-receipt-img" src="" alt="Full Receipt">
-                <div id="crop-box" class="crop-box" style="display: none;">
-                    <div class="crop-handle handle-nw" data-handle="nw"></div>
-                    <div class="crop-handle handle-n" data-handle="n"></div>
-                    <div class="crop-handle handle-ne" data-handle="ne"></div>
-                    <div class="crop-handle handle-e" data-handle="e"></div>
-                    <div class="crop-handle handle-se" data-handle="se"></div>
-                    <div class="crop-handle handle-s" data-handle="s"></div>
-                    <div class="crop-handle handle-sw" data-handle="sw"></div>
-                    <div class="crop-handle handle-w" data-handle="w"></div>
-                </div>
+                <div id="crop-overlay" class="crop-overlay"></div>
                 <div id="redactions-container" class="redactions-container"></div>
                 <canvas id="redaction-canvas"></canvas>
             </div>
@@ -120,8 +116,7 @@
     </div>
 
     <div id="toast-container" class="toast-container"></div>
-
-    <script src="app.js"></script>
+    <script type="module" src="js/app.js"></script>
 </body>
 
 </html>

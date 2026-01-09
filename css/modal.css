@@ -1,0 +1,243 @@
+/* Full View Modal */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 100;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(5px);
+}
+
+.modal-content {
+    display: flex;
+    flex-direction: column;
+    height: 96%;
+    width: 96%;
+    max-width: none;
+    margin: 2% auto;
+    background: #0b0e14;
+    border: 1px solid var(--glass-border);
+    border-radius: 15px;
+    overflow: hidden;
+    position: relative;
+    /* Context for close button */
+}
+
+/* Close button - Top Right, High visibility */
+.close-modal {
+    position: absolute;
+    top: 20px;
+    right: 30px;
+    color: #fff;
+    font-size: 3rem;
+    font-weight: 300;
+    cursor: pointer;
+    z-index: 200;
+    line-height: 0.8;
+    background: rgba(0, 0, 0, 0.5);
+    width: 50px;
+    height: 50px;
+    text-align: center;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.close-modal:hover {
+    color: var(--error);
+    background: rgba(255, 77, 77, 0.2);
+}
+
+.modal-header {
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid var(--glass-border);
+    display: flex;
+    align-items: center;
+    /* justify-content: space-between; -- Removed, we use spacer in toolbar */
+    background: rgba(255, 255, 255, 0.05);
+    /* Slightly lighter header */
+}
+
+/* Ensure image fits entirely within the view without scrolling initially */
+.canvas-wrapper {
+    position: relative;
+    max-width: 100%;
+    max-height: 100%;
+    width: fit-content;
+    /* Key: wrapper shrinks to image width */
+    height: fit-content;
+    /* Key: wrapper shrinks to image height */
+    overflow: auto;
+    /* Allow scroll only if scaled via zoom */
+    margin: auto;
+    /* Center in modal flex container */
+    display: block;
+    /* Block to wrap image */
+}
+
+.modal-img {
+    display: block;
+    max-width: 100%;
+    /* Constrained by wrapper's parent (modal-content) via flex? No, max-height/width on wrapper handles it */
+    max-height: 85vh;
+    /* Explicit height limit to keep it on screen (leaving room for toolbar) */
+    height: auto;
+    width: auto;
+    object-fit: contain;
+}
+
+.modal-img.zoomed {
+    max-width: none;
+    max-height: none;
+    transform: scale(1.5);
+    transform-origin: top left;
+    cursor: zoom-out;
+}
+
+/* Crop Overlay */
+.crop-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+.crop-box {
+    position: absolute;
+    border: 2px solid var(--accent-primary);
+    background: rgba(0, 229, 255, 0.1);
+    pointer-events: all;
+    cursor: move;
+}
+
+/* Redaction Overlay */
+.redactions-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 20;
+}
+
+.redaction-block {
+    position: absolute;
+    background-color: #000;
+    opacity: 0.6;
+    pointer-events: auto;
+    cursor: pointer;
+    border: 1px solid transparent;
+}
+
+.redact-mode .redaction-block:hover {
+    opacity: 0.4;
+    border-color: rgba(255, 255, 255, 0.5);
+}
+
+.redact-mode .redaction-block.selected {
+    border: 2px solid var(--error);
+    opacity: 0.4;
+    cursor: move;
+}
+
+#redaction-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 25;
+    pointer-events: auto;
+    cursor: crosshair;
+}
+
+/* Handles shared by Crop and Redaction */
+.crop-handle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: #fff;
+    border-radius: 50%;
+    pointer-events: all;
+}
+
+.handle-nw {
+    top: -5px;
+    left: -5px;
+    cursor: nw-resize;
+}
+
+.handle-n {
+    top: -5px;
+    left: 50%;
+    margin-left: -5px;
+    cursor: n-resize;
+}
+
+.handle-ne {
+    top: -5px;
+    right: -5px;
+    cursor: ne-resize;
+}
+
+.handle-e {
+    top: 50%;
+    right: -5px;
+    margin-top: -5px;
+    cursor: e-resize;
+}
+
+.handle-se {
+    bottom: -5px;
+    right: -5px;
+    cursor: se-resize;
+}
+
+.handle-s {
+    bottom: -5px;
+    left: 50%;
+    margin-left: -5px;
+    cursor: s-resize;
+}
+
+.handle-sw {
+    bottom: -5px;
+    left: -5px;
+    cursor: sw-resize;
+}
+
+.handle-w {
+    top: 50%;
+    left: -5px;
+    margin-top: -5px;
+    cursor: w-resize;
+}
+
+.modal-footer {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--glass-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.modal-toolbar {
+    display: flex;
+    gap: 10px;
+}
+
+/* Redaction Mode Specifics */
+.modal.redact-mode .modal-header {
+    background-color: rgba(255, 77, 77, 0.1);
+}
+
+.modal.redact-mode .crop-overlay {
+    display: none;
+}
