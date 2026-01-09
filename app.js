@@ -91,15 +91,16 @@ async function warmUpAI() {
             ],
             initialPrompts: [
                 {
-                    role: 'system', content: `You are a Japanese receipt parser. Extract Merchant name, Date (YYYY-MM-DD), and Total Amount as a whole integer.
+                    role: 'system', content: `You are a Japanese receipt parser. Extract Merchant name, Date (YYYY-MM-DD), Total Amount as a whole integer, and Category.
                     
-                    Provide up to 3 candidates for each field, ordered by likelihood (most likely first).
+                    Provide up to 5 candidates for each field, ordered by likelihood (most likely first).
                     If a field is very certain, you can provide fewer candidates.
 
                     Hints for extractions:
-                    - **Total Amount**: Usually in a larger or bold font, preceded by "合計" or the symbol "¥". Japanese Yen does not use cents/decimals.
+                    - **Total Amount**: Usually preceded by the symbol "¥", and typically presented in a larger or bold font and after the "合計" label. Japanese Yen does not use cents/decimals.
                     - **Date**: Look for "YYYY/MM/DD", "YYYY-MM-DD", or "YYYY年MM月DD日". It's often at the top and may be followed by a time (HH:mm).
                     - **Merchant**: Usually at the very top. It's often followed by an address or phone number. Do not confuse generic terms like "領収書" (Receipt) with the vendor name.
+                    - **Category**: Suggest possible YNAB categories (e.g., Dining Out, Groceries, Transportation, Entertainment, Shopping).
                     ` }
             ]
         });
@@ -177,11 +178,12 @@ async function runAIExtraction(imageBlob, card, fileName) {
         const schema = {
             type: "object",
             properties: {
-                merchants: { type: "array", items: { type: "string" }, description: "Up to 3 merchant candidates, most likely first" },
-                dates: { type: "array", items: { type: "string" }, description: "Up to 3 date candidates (YYYY-MM-DD), most likely first" },
-                amounts: { type: "array", items: { type: "integer" }, description: "Up to 3 amount candidates (whole numbers), most likely first" }
+                merchants: { type: "array", items: { type: "string" }, description: "Up to 5 merchant candidates, most likely first" },
+                dates: { type: "array", items: { type: "string" }, description: "Up to 5 date candidates (YYYY-MM-DD), most likely first" },
+                amounts: { type: "array", items: { type: "integer" }, description: "Up to 5 amount candidates (whole numbers), most likely first" },
+                categories: { type: "array", items: { type: "string" }, description: "Up to 5 suggested YNAB categories, most likely first" }
             },
-            required: ["merchants", "dates", "amounts"]
+            required: ["merchants", "dates", "amounts", "categories"]
         };
 
         const resultText = await session.prompt([
@@ -237,6 +239,11 @@ function createReceiptCard(fileName, file) {
                 </div>
                 <div class="suggestion-chips amounts-chips"></div>
             </div>
+            <div class="field-group">
+                <label>Category (Suggestion)</label>
+                <input type="text" class="edit-input category-input" placeholder="Suggested category...">
+                <div class="suggestion-chips categories-chips"></div>
+            </div>
         </div>
         <div class="card-actions">
             <button class="btn btn-small btn-push" disabled>Push to YNAB</button>
@@ -271,15 +278,28 @@ function createReceiptCard(fileName, file) {
 }
 
 function updateReceiptCard(card, data) {
-    // Deduplicate candidates while preserving order
-    const merchants = [...new Set(data.merchants || [])];
-    const dates = [...new Set(data.dates || [])];
-    const amounts = [...new Set(data.amounts || [])];
+    // Deduplicate candidates while preserving order and normalizing
+    const dedupe = (arr) => {
+        const seen = new Set();
+        return (arr || []).filter(item => {
+            if (item === null || item === undefined) return false;
+            const normalized = String(item).trim().toLowerCase();
+            if (seen.has(normalized)) return false;
+            seen.add(normalized);
+            return true;
+        });
+    };
+
+    const merchants = dedupe(data.merchants);
+    const dates = dedupe(data.dates);
+    const amounts = dedupe(data.amounts);
+    const categories = dedupe(data.categories);
 
     // Set primary values (most likely)
     card.querySelector('.merchant-input').value = merchants[0] || '';
     card.querySelector('.date-input').value = normalizeDate(dates[0]) || '';
     card.querySelector('.amount-input').value = amounts[0] || 0;
+    card.querySelector('.category-input').value = categories[0] || '';
     card.querySelector('.btn-push').disabled = false;
 
     // Render alternative chips
@@ -291,6 +311,9 @@ function updateReceiptCard(card, data) {
     });
     renderChips(card.querySelector('.amounts-chips'), amounts, val => {
         card.querySelector('.amount-input').value = val;
+    });
+    renderChips(card.querySelector('.categories-chips'), categories, val => {
+        card.querySelector('.category-input').value = val;
     });
 }
 
