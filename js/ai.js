@@ -17,7 +17,15 @@ export async function checkAIAvailability() {
             throw new Error('LanguageModel API not found. Please use a browser that supports it.');
         }
 
-        const availability = await LanguageModel.availability({ languages: ['ja', 'en'] });
+        const availability = await LanguageModel.availability({
+            expectedInputs: [
+                { type: "text", languages: ["en", "ja"] },
+                { type: "image" }
+            ],
+            expectedOutputs: [
+                { type: "text", languages: ["ja"] }
+            ]
+        });
 
         if (availability === 'available') {
             dot.className = 'dot ok';
@@ -42,7 +50,45 @@ export async function checkAIAvailability() {
 export async function warmUpAI() {
     if (baseSession) return;
 
+    performance.mark('start-ai-warm-up');
+    try {
+        const params = await LanguageModel.params();
+        const dummySession = await LanguageModel.create({
+            temperature: 0.0,
+            topK: 1,
+            expectedInputs: [
+                { type: "text", languages: ["en", "ja"] },
+                { type: "image" }
+            ],
+            initialPrompts: [
+                {
+                    role: 'system', content: `Respond with '.' only.`
+                }
+            ],
+            expectedOutputs: [
+                { type: "text", languages: ["ja"] }
+            ]
+        });
+
+        // Dummy prompt to trigger model loading/warming
+        await dummySession.prompt([{ role: 'user', content: [{ type: 'text', value: '.' }] }]);
+
+        performance.mark('end-ai-warm-up');
+        performance.measure('AI Warm-up duration', 'start-ai-warm-up', 'end-ai-warm-up');
+
+        // Access the result programmatically
+        const measure = performance.getEntriesByName('AI Warm-up duration')[0];
+        console.log('AI Warm-up successful; duration:', measure.duration);
+    } catch (err) {
+        console.warn('AI Warm-up failed:', err);
+    }
+}
+
+export async function setupAI() {
+    if (baseSession) return;
+
     const ynabCategories = getYNABCategories();
+    performance.mark('start-ai-setup');
 
     try {
         const params = await LanguageModel.params();
@@ -77,17 +123,17 @@ export async function warmUpAI() {
             ]
         });
 
-        // Dummy prompt to trigger model loading/warming
-        await baseSession.prompt([{ role: 'user', content: [{ type: 'text', value: 'Warm up' }] }]);
-        console.log('AI Warm-up successful');
+        performance.mark('end-ai-setup');
+        const measure = performance.measure('AI Setup duration', 'start-ai-setup', 'end-ai-setup');
+        console.log('AI Setup successful; duration:', measure.duration);
     } catch (err) {
-        console.warn('AI Warm-up failed:', err);
+        console.warn('AI Setup failed:', err);
     }
 }
 
 async function getAISession() {
     if (!baseSession) {
-        await warmUpAI();
+        await setupAI();
     }
     if (!baseSession) throw new Error("Could not initialize AI session");
 
@@ -110,6 +156,7 @@ export async function runAIExtraction(imageBlob, card, fileName) {
             required: ["merchants", "dates", "amounts", "categories"]
         };
 
+        performance.mark(`start-ai-extraction-${fileName}`);
         const resultText = await session.prompt([
             {
                 role: 'user',
@@ -119,6 +166,10 @@ export async function runAIExtraction(imageBlob, card, fileName) {
                 ]
             }
         ], { responseConstraint: schema });
+
+        performance.mark(`end-ai-extraction-${fileName}`);
+        const measure = performance.measure('AI Extraction duration', `start-ai-extraction-${fileName}`, `end-ai-extraction-${fileName}`);
+        console.log('AI Extraction successful; duration:', measure.duration);
 
         const data = JSON.parse(resultText);
         updateReceiptCard(card, data);

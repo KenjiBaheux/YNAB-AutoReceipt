@@ -48,7 +48,7 @@ export async function pushToYNAB(card, fileName) {
 
     if (!apiPAT || !budgetId || !accountId) {
         showToast('Please fill in all YNAB settings.', 'error');
-        return;
+        return false;
     }
 
     const merchant = card.querySelector('.merchant-input').value;
@@ -58,7 +58,7 @@ export async function pushToYNAB(card, fileName) {
 
     if (!merchant || !date || !amountVal) {
         showToast('Please verify all fields before pushing.', 'error');
-        return;
+        return false;
     }
 
     // Resolve Category ID
@@ -70,7 +70,7 @@ export async function pushToYNAB(card, fileName) {
         } else if (ynabCategories.length > 0) {
             // If we have categories loaded but user typed something else
             showToast(`Category "${categoryName}" not found in YNAB. Please select a valid category.`, 'error');
-            return;
+            return false;
         }
     }
 
@@ -117,7 +117,9 @@ export async function pushToYNAB(card, fileName) {
         showToast(err.message, 'error');
         pushBtn.disabled = false;
         pushBtn.innerHTML = '<span class="icon">💰</span> Push to YNAB';
+        return false;
     }
+    return true;
 }
 
 export async function pushAllToYNAB() {
@@ -129,6 +131,15 @@ export async function pushAllToYNAB() {
 
     if (readyCards.length === 0) {
         showToast('No receipts ready to push', 'info');
+        return;
+    }
+
+    const apiPAT = DOM.apiPAT.value;
+    const budgetId = DOM.budgetId.value;
+    const accountId = DOM.accountId.value;
+
+    if (!apiPAT || !budgetId || !accountId) {
+        showToast('Please fill in all YNAB settings.', 'error');
         return;
     }
 
@@ -151,8 +162,8 @@ export async function pushAllToYNAB() {
         DOM.progressCounter.querySelector('.progress-text').textContent = `Pushing ${i + 1}/${total}...`;
 
         try {
-            await pushToYNAB(card, fileName);
-            successCount++;
+            const success = await pushToYNAB(card, fileName);
+            if (success) { successCount++; } else { errorCount++; }
         } catch (err) {
             console.error(`Failed to push ${fileName}:`, err);
             errorCount++;
