@@ -44,6 +44,12 @@
                     <label for="ynab-account-id">Account ID</label>
                     <input type="text" id="ynab-account-id" placeholder="Account ID...">
                 </div>
+                <div class="input-group" style="align-self: flex-end; flex-direction: row; gap: 10px; align-items: center;">
+                    <button id="btn-refresh-categories" class="btn btn-small" title="Refresh Categories">
+                        <span class="icon">🔄</span>
+                    </button>
+                    <small id="category-count" style="color: rgba(255,255,255,0.7); white-space: nowrap;">0 cats</small>
+                </div>
             </div>
 
             <div class="actions">
@@ -116,6 +122,7 @@
     </div>
 
     <div id="toast-container" class="toast-container"></div>
+    <datalist id="ynab-category-list"></datalist>
     <script type="module" src="js/app.js"></script>
 </body>
 

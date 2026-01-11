@@ -1,13 +1,14 @@
 export const CONFIG = {
     processedFilesKey: 'ynab_receipt_porter_processed',
-    ynabKeyPath: 'ynab_api_key',
+    ynabCategoriesKey: 'ynab_receipt_porter_categories',
+    ynabKeyPath: 'ynab_api_pat',
     ynabBudgetIdPath: 'ynab_budget_id',
     ynabAccountIdPath: 'ynab_account_id'
 };
 
 // State
 let processedFiles = new Set(JSON.parse(localStorage.getItem(CONFIG.processedFilesKey) || '[]'));
-let ynabCategories = [];
+let ynabCategories = JSON.parse(localStorage.getItem(CONFIG.ynabCategoriesKey) || '[]');
 
 // Getters and Setters
 export function getProcessedFiles() {
@@ -29,4 +30,5 @@ export function getYNABCategories() {
 
 export function setYNABCategories(categories) {
     ynabCategories = categories;
+    localStorage.setItem(CONFIG.ynabCategoriesKey, JSON.stringify(categories));
 }

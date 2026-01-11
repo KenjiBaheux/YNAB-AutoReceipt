@@ -21,15 +21,30 @@ async function init() {
     [DOM.apiPAT, DOM.budgetId, DOM.accountId].forEach(el => {
         el.addEventListener('change', (e) => {
             localStorage.setItem(e.target.id.replace(/-/g, '_'), e.target.value);
-            if (DOM.apiPAT.value && DOM.budgetId.value) fetchYNABCategories();
+            if (DOM.apiPAT.value && DOM.budgetId.value) fetchYNABCategories(true); // Force refresh if settings change
         });
     });
 
     await checkAIAvailability();
-    if (DOM.apiPAT.value && DOM.budgetId.value) fetchYNABCategories();
+
+    // Initial fetch (will use cache if available)
+    if (DOM.apiPAT.value && DOM.budgetId.value) {
+        fetchYNABCategories();
+    }
 
     DOM.btnSync.addEventListener('click', handleFolderSync);
     DOM.btnPushAll.addEventListener('click', pushAllToYNAB);
+
+    const btnRefresh = document.getElementById('btn-refresh-categories');
+    if (btnRefresh) {
+        btnRefresh.addEventListener('click', () => {
+            if (DOM.apiPAT.value && DOM.budgetId.value) {
+                fetchYNABCategories(true);
+            } else {
+                showToast('Configure API settings first', 'info');
+            }
+        });
+    }
 
     setupModalListeners();
 }

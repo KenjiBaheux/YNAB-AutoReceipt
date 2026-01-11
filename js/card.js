@@ -1,7 +1,7 @@
 import { DOM } from './dom.js';
 import { pushToYNAB } from './ynab.js';
 import { renderChips, updateProgressCounter } from './ui.js';
-import { getYNABCategories, markAsProcessed } from './config.js';
+import { markAsProcessed } from './config.js';
 import { setActiveRedactionCard, setupCroppingUI, renderRedactions, updateModalToolbar, setupRedactionCanvas, clearRedactionCanvas } from './modal.js';
 
 let cardCounter = 0;
@@ -18,8 +18,6 @@ export function createReceiptCard(fileName, optimizedBlob, displayUrl, originalF
     // Store original URL as well
     const originalUrl = URL.createObjectURL(originalFile);
     card.dataset.originalUrl = originalUrl;
-
-    const ynabCategories = getYNABCategories();
 
     card.innerHTML = `
         <div class="receipt-preview-container" title="Click to enlarge">
@@ -47,10 +45,7 @@ export function createReceiptCard(fileName, optimizedBlob, displayUrl, originalF
             </div>
             <div class="field-group">
                 <label>Category</label>
-                <input type="text" class="edit-input category-input" placeholder="Category..." list="category-list-${cardCounter}">
-                <datalist id="category-list-${cardCounter}">
-                    ${ynabCategories.map(c => `<option value="${c.name}">${c.group}: ${c.name}</option>`).join('')}
-                </datalist>
+                <input type="text" class="edit-input category-input" placeholder="Category..." list="ynab-category-list">
                 <div class="suggestion-chips categories-chips"></div>
             </div>
         </div>
