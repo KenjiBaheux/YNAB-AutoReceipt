@@ -27,10 +27,17 @@
                 <span class="logo-icon">🧾</span>
                 <h1>YNAB Receipt Porter</h1>
             </div>
-            <p class="subtitle">Extract receipts with Chrome AI and sync to YNAB instantly.</p>
+            <p class="subtitle">Extract receipts with Chrome AI and sync to YNAB effortlessly.</p>
         </header>
 
         <section class="controls glass">
+            <div class="settings-header" style="display: flex; align-items: center; gap: 10px; margin-bottom: 1rem;">
+                <h3 style="margin: 0; font-size: 1.1rem; color: rgba(255,255,255,0.9);">YNAB Settings</h3>
+                <a href="https://api.ynab.com/#quick-start" target="_blank" title="How to get these values"
+                    style="text-decoration: none; opacity: 0.7; transition: opacity 0.2s;">
+                    <span class="icon" style="font-size: 1rem;">❓</span>
+                </a>
+            </div>
             <div class="api-settings">
                 <div class="input-group">
                     <label for="ynab-api-pat">YNAB Personal Access Token</label>
@@ -44,7 +51,8 @@
                     <label for="ynab-account-id">Account ID</label>
                     <input type="text" id="ynab-account-id" placeholder="Account ID...">
                 </div>
-                <div class="input-group" style="align-self: flex-end; flex-direction: row; gap: 10px; align-items: center;">
+                <div class="input-group"
+                    style="align-self: flex-end; flex-direction: row; gap: 10px; align-items: center;">
                     <button id="btn-refresh-categories" class="btn btn-small" title="Refresh Categories">
                         <span class="icon">🔄</span>
                     </button>
