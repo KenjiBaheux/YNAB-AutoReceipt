@@ -1,6 +1,6 @@
 import { DOM } from './dom.js';
 import { CONFIG, getProcessedFiles, markAsProcessed } from './config.js';
-import { fetchYNABCategories, pushAllToYNAB } from './ynab.js';
+import { fetchYNABBudgets, fetchYNABAccounts, fetchYNABCategories, pushAllToYNAB } from './ynab.js';
 import { checkAIAvailability } from './ai.js';
 import { optimizeImageForAI } from './image.js';
 import { createReceiptCard } from './card.js';
@@ -14,22 +14,39 @@ let directoryHandle = null;
 async function init() {
     // Load saved settings
     DOM.apiPAT.value = localStorage.getItem(CONFIG.ynabKeyPath) || '';
-    DOM.budgetId.value = localStorage.getItem(CONFIG.ynabBudgetIdPath) || '';
-    DOM.accountId.value = localStorage.getItem(CONFIG.ynabAccountIdPath) || '';
+    // Budget and Account IDs will be selected in the fetch cascading logic
 
     // Save settings on change
-    [DOM.apiPAT, DOM.budgetId, DOM.accountId].forEach(el => {
-        el.addEventListener('change', (e) => {
-            localStorage.setItem(e.target.id.replace(/-/g, '_'), e.target.value);
-            if (DOM.apiPAT.value && DOM.budgetId.value) fetchYNABCategories(true); // Force refresh if settings change
-        });
+    DOM.apiPAT.addEventListener('change', async (e) => {
+        localStorage.setItem(CONFIG.ynabKeyPath, e.target.value);
+        if (e.target.value) {
+            await fetchYNABBudgets();
+        }
+    });
+
+    DOM.budgetId.addEventListener('change', async (e) => {
+        const id = e.target.value;
+        localStorage.setItem(CONFIG.ynabBudgetIdPath, id);
+        if (id) {
+            await fetchYNABAccounts(id);
+            await fetchYNABCategories(true); // Force refresh for new budget
+        }
+    });
+
+    DOM.accountId.addEventListener('change', (e) => {
+        localStorage.setItem(CONFIG.ynabAccountIdPath, e.target.value);
     });
 
     await checkAIAvailability();
 
-    // Initial fetch (will use cache if available)
-    if (DOM.apiPAT.value && DOM.budgetId.value) {
-        fetchYNABCategories();
+    // Initial load cascade
+    if (DOM.apiPAT.value) {
+        const budgets = await fetchYNABBudgets();
+        const savedBudgetId = localStorage.getItem(CONFIG.ynabBudgetIdPath);
+        if (savedBudgetId && budgets.some(b => b.id === savedBudgetId)) {
+            await fetchYNABAccounts(savedBudgetId);
+            await fetchYNABCategories();
+        }
     }
 
     DOM.btnSync.addEventListener('click', handleFolderSync);

@@ -27,7 +27,7 @@
                 <span class="logo-icon">🧾</span>
                 <h1>YNAB Receipt Porter</h1>
             </div>
-            <p class="subtitle">Extract receipts with Chrome AI and sync to YNAB effortlessly.</p>
+            <p class="subtitle">Extract receipts with Built-in AI and sync to YNAB effortlessly.</p>
         </header>
 
         <section class="controls glass">
@@ -44,12 +44,16 @@
                     <input type="password" id="ynab-api-pat" placeholder="Enter PAT...">
                 </div>
                 <div class="input-group">
-                    <label for="ynab-budget-id">Budget ID</label>
-                    <input type="text" id="ynab-budget-id" placeholder="Budget ID...">
+                    <label for="ynab-budget-id">Budget</label>
+                    <select id="ynab-budget-id">
+                        <option value="">Select a PAT first...</option>
+                    </select>
                 </div>
                 <div class="input-group">
-                    <label for="ynab-account-id">Account ID</label>
-                    <input type="text" id="ynab-account-id" placeholder="Account ID...">
+                    <label for="ynab-account-id">Account</label>
+                    <select id="ynab-account-id">
+                        <option value="">Select a budget first...</option>
+                    </select>
                 </div>
                 <div class="input-group"
                     style="align-self: flex-end; flex-direction: row; gap: 10px; align-items: center;">

@@ -9,7 +9,7 @@ let cardCounter = 0;
 export function createReceiptCard(fileName, optimizedBlob, displayUrl, originalFile, autoBounds) {
     cardCounter++;
     const card = document.createElement('div');
-    card.className = 'receipt-card';
+    card.className = 'receipt-card processing';
     card.id = `receipt-${cardCounter}`;
     card.dataset.merchant = fileName; // Initial fallback
     card.dataset.bounds = JSON.stringify(autoBounds);

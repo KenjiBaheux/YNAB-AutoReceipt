@@ -2,19 +2,95 @@ import { DOM } from './dom.js';
 import { showToast, updateProgressCounter } from './ui.js';
 import { setYNABCategories, getYNABCategories, markAsProcessed, CONFIG } from './config.js';
 
+export async function fetchYNABBudgets() {
+    const apiPAT = DOM.apiPAT.value;
+    if (!apiPAT) return [];
+
+    try {
+        const response = await fetch('https://api.ynab.com/v1/budgets', {
+            headers: { 'Authorization': `Bearer ${apiPAT}` }
+        });
+
+        if (!response.ok) throw new Error('Failed to fetch budgets');
+
+        const data = await response.json();
+        const budgets = data.data.budgets.map(b => ({
+            id: b.id,
+            name: b.name
+        }));
+
+        updateBudgetDropdown(budgets);
+        return budgets;
+    } catch (err) {
+        console.error('Error loading YNAB budgets:', err);
+        showToast('Failed to load budgets', 'error');
+        return [];
+    }
+}
+
+export async function fetchYNABAccounts(budgetId) {
+    const apiPAT = DOM.apiPAT.value;
+    if (!apiPAT || !budgetId) return [];
+
+    try {
+        const response = await fetch(`https://api.ynab.com/v1/budgets/${budgetId}/accounts`, {
+            headers: { 'Authorization': `Bearer ${apiPAT}` }
+        });
+
+        if (!response.ok) throw new Error('Failed to fetch accounts');
+
+        const data = await response.json();
+        // Filter for on_budget accounts
+        const accounts = data.data.accounts
+            .filter(a => a.on_budget && !a.closed)
+            .map(a => ({
+                id: a.id,
+                name: a.name,
+                type: a.type
+            }));
+
+        updateAccountDropdown(accounts);
+        return accounts;
+    } catch (err) {
+        console.error('Error loading YNAB accounts:', err);
+        showToast('Failed to load accounts', 'error');
+        return [];
+    }
+}
+
+function updateBudgetDropdown(budgets) {
+    const select = DOM.budgetId;
+    const currentBudgetId = localStorage.getItem(CONFIG.ynabBudgetIdPath);
+
+    select.innerHTML = '<option value="">Select a budget...</option>' +
+        budgets.map(b => `<option value="${b.id}" ${b.id === currentBudgetId ? 'selected' : ''}>${b.name}</option>`).join('');
+}
+
+function updateAccountDropdown(accounts) {
+    const select = DOM.accountId;
+    const currentAccountId = localStorage.getItem(CONFIG.ynabAccountIdPath);
+
+    select.innerHTML = '<option value="">Select an account...</option>' +
+        accounts.map(a => `<option value="${a.id}" ${a.id === currentAccountId ? 'selected' : ''}>${a.name} (${a.type})</option>`).join('');
+}
+
 export async function fetchYNABCategories(forceRefresh = false) {
     const apiPAT = DOM.apiPAT.value;
     const budgetId = DOM.budgetId.value;
 
-    if (!apiPAT || !budgetId) return [];
+    if (!apiPAT || !budgetId) {
+        updateCategoryUI([]); // Clear UI if no budget
+        return [];
+    }
 
-    let categories = getYNABCategories();
+    const cached = getYNABCategories();
+    // cached now expected to be { budgetId, categories } or []
 
-    // Use cached if available and not forced
-    if (!forceRefresh && categories.length > 0) {
-        console.log(`Using ${categories.length} cached YNAB categories`);
-        updateCategoryUI(categories);
-        return categories;
+    // Use cached if available, not forced, and matches current budget
+    if (!forceRefresh && cached && cached.budgetId === budgetId && cached.categories.length > 0) {
+        console.log(`Using ${cached.categories.length} cached YNAB categories for budget ${budgetId}`);
+        updateCategoryUI(cached.categories);
+        return cached.categories;
     }
 
     // UI Feedback for refresh
@@ -31,12 +107,12 @@ export async function fetchYNABCategories(forceRefresh = false) {
         const data = await response.json();
         const groups = data.data.category_groups;
 
-        categories = [];
+        const categoriesList = [];
         groups.forEach(group => {
             if (group.hidden || group.deleted) return;
             group.categories.forEach(cat => {
                 if (!cat.hidden && !cat.deleted) {
-                    categories.push({
+                    categoriesList.push({
                         id: cat.id,
                         name: cat.name,
                         group: group.name
@@ -45,11 +121,11 @@ export async function fetchYNABCategories(forceRefresh = false) {
             });
         });
 
-        setYNABCategories(categories);
-        updateCategoryUI(categories);
-        showToast(`Loaded ${categories.length} YNAB categories`, 'success');
-        console.log(`Loaded ${categories.length} YNAB categories`);
-        return categories;
+        setYNABCategories({ budgetId, categories: categoriesList });
+        updateCategoryUI(categoriesList);
+        showToast(`Loaded ${categoriesList.length} YNAB categories`, 'success');
+        console.log(`Loaded ${categoriesList.length} YNAB categories`);
+        return categoriesList;
     } catch (err) {
         console.error('Error loading YNAB categories:', err);
         showToast('Failed to load categories', 'error');
@@ -127,8 +203,11 @@ export async function pushToYNAB(card, fileName) {
         return false;
     }
 
-    let ynabCategories = getYNABCategories();
-    if (ynabCategories.length === 0) {
+    let categoryData = getYNABCategories();
+    let ynabCategories = Array.isArray(categoryData) ? categoryData : (categoryData.categories || []);
+
+    // Ensure categories are for the current budget
+    if (ynabCategories.length === 0 || (!Array.isArray(categoryData) && categoryData.budgetId !== budgetId)) {
         ynabCategories = await fetchYNABCategories();
         if (ynabCategories.length === 0) {
             showToast('Could not load YNAB categories. Please check API key.', 'error');
@@ -201,8 +280,10 @@ export async function pushAllToYNAB() {
         return;
     }
 
-    let ynabCategories = getYNABCategories();
-    if (ynabCategories.length === 0) {
+    let categoryData = getYNABCategories();
+    let ynabCategories = Array.isArray(categoryData) ? categoryData : (categoryData.categories || []);
+
+    if (ynabCategories.length === 0 || (!Array.isArray(categoryData) && categoryData.budgetId !== budgetId)) {
         ynabCategories = await fetchYNABCategories();
         if (ynabCategories.length === 0) {
             showToast('Could not load YNAB categories. Please check API key.', 'error');
