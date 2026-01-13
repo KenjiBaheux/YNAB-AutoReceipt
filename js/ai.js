@@ -141,9 +141,14 @@ async function getAISession() {
     return await baseSession.clone();
 }
 
-export async function runAIExtraction(imageBlob, card, fileName) {
+export async function runAIExtraction(imageInput, card, fileName) {
     try {
         const session = await getAISession();
+        const images = Array.isArray(imageInput) ? imageInput : [imageInput];
+
+        if (images.length > 1) {
+            console.log(`Processing tall receipt in ${images.length} chunks for ${fileName}`);
+        }
 
         const schema = {
             type: "object",
@@ -157,15 +162,16 @@ export async function runAIExtraction(imageBlob, card, fileName) {
         };
 
         performance.mark(`start-ai-extraction-${fileName}`);
-        const resultText = await session.prompt([
-            {
-                role: 'user',
-                content: [
-                    { type: 'text', value: "Extract JSON from this receipt:" },
-                    { type: 'image', value: imageBlob }
-                ]
-            }
-        ], { responseConstraint: schema });
+        const promptContent = [
+            { role: 'user', content: [{ type: 'text', value: "Extract JSON from this receipt:" }] }
+        ];
+
+        // Add images to the prompt
+        images.forEach(blob => {
+            promptContent[0].content.push({ type: 'image', value: blob });
+        });
+
+        const resultText = await session.prompt(promptContent, { responseConstraint: schema });
 
         performance.mark(`end-ai-extraction-${fileName}`);
         const measure = performance.measure('AI Extraction duration', `start-ai-extraction-${fileName}`, `end-ai-extraction-${fileName}`);

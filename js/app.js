@@ -2,7 +2,7 @@ import { DOM } from './dom.js';
 import { CONFIG, getProcessedFiles, markAsProcessed } from './config.js';
 import { fetchYNABBudgets, fetchYNABAccounts, fetchYNABCategories, pushAllToYNAB } from './ynab.js';
 import { checkAIAvailability } from './ai.js';
-import { optimizeImageForAI } from './image.js';
+import { optimizeImageForAI, createVerticalChunks } from './image.js';
 import { createReceiptCard } from './card.js';
 import { runAIExtraction } from './ai.js';
 import { updateProgressCounter, showToast } from './ui.js';
@@ -126,7 +126,7 @@ async function handleRetryAI() {
         const redactions = card.dataset.redactions ? JSON.parse(card.dataset.redactions) : [];
 
         // 2. Process Image (Crop + Redact)
-        const processedBlob = await applyAdjustments(originalFile, bounds, redactions);
+        const { blob: processedBlob, chunks } = await applyAdjustments(originalFile, bounds, redactions);
         const processedUrl = URL.createObjectURL(processedBlob);
 
         // 3. Update Card UI
@@ -147,7 +147,7 @@ async function handleRetryAI() {
         showToast('Retrying analysis in background...', 'info');
 
         // 6. Re-run Extraction (Async)
-        runAIExtraction(processedBlob, card, fileName).catch(err => {
+        runAIExtraction(chunks, card, fileName).catch(err => {
             console.error('Background retry failed:', err);
             showToast('Background analysis failed', 'error');
         });
@@ -164,7 +164,7 @@ async function handleRetryAI() {
 async function applyAdjustments(file, bounds, redactions) {
     return new Promise((resolve) => {
         const img = new Image();
-        img.onload = () => {
+        img.onload = async () => {
             const canvas = document.createElement('canvas');
 
             // 1. Determine Crop
@@ -196,7 +196,18 @@ async function applyAdjustments(file, bounds, redactions) {
                 ctx.fillRect(rx, ry, r.w, r.h);
             });
 
-            canvas.toBlob(resolve, 'image/jpeg', 0.95);
+            const ratio = sh / sw;
+            const chunks = [];
+            const displayBlob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.95));
+
+            if (ratio > 1.8) {
+                const chunkBlobs = await createVerticalChunks(canvas, ratio);
+                chunks.push(...chunkBlobs);
+            } else {
+                chunks.push(displayBlob);
+            }
+
+            resolve({ blob: displayBlob, chunks });
         };
         img.src = URL.createObjectURL(file);
     });
@@ -243,17 +254,19 @@ async function processReceipt(fileHandle) {
     const fileName = fileHandle.name;
 
     // Preprocess image (crop whitespace)
-    let optimizedBlob, optimizedUrl, autoBounds;
+    let optimizedBlob, optimizedUrl, autoBounds, chunks;
     try {
         const optimized = await optimizeImageForAI(file);
         optimizedBlob = optimized.blob;
         optimizedUrl = optimized.url;
         autoBounds = optimized.bounds;
+        chunks = optimized.chunks;
     } catch (err) {
         console.warn('Image optimization failed, using original:', err);
         optimizedBlob = file;
         optimizedUrl = URL.createObjectURL(file);
         autoBounds = null; // Signal full image
+        chunks = [file];
     }
 
     // Create UI Card
@@ -263,7 +276,7 @@ async function processReceipt(fileHandle) {
     }
     DOM.receiptList.appendChild(card);
 
-    await runAIExtraction(optimizedBlob, card, fileName);
+    await runAIExtraction(chunks || optimizedBlob, card, fileName);
 }
 
 // Start the app

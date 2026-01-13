@@ -31,17 +31,53 @@ export async function optimizeImageForAI(file) {
             const finalCtx = finalCanvas.getContext('2d');
             finalCtx.drawImage(img, finalBounds.left, finalBounds.top, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
 
-            finalCanvas.toBlob(blob => {
+            const ratio = cropHeight / cropWidth;
+            const chunks = [];
+
+            finalCanvas.toBlob(async (blob) => {
+                // Determine if we need to chunk for AI accuracy
+                // Colleague's tip: split tall receipts
+                if (ratio > 1.8) {
+                    const chunkBlobs = await createVerticalChunks(finalCanvas, ratio);
+                    chunks.push(...chunkBlobs);
+                } else {
+                    chunks.push(blob);
+                }
+
                 resolve({
                     blob,
                     url: URL.createObjectURL(blob),
-                    bounds: finalBounds
+                    bounds: finalBounds,
+                    chunks
                 });
             }, 'image/jpeg', 0.9);
         };
         img.onerror = reject;
         img.src = URL.createObjectURL(file);
     });
+}
+
+export async function createVerticalChunks(canvas, ratio) {
+    const numChunks = ratio > 3.2 ? 3 : 2;
+    const overlap = 0.15; // 15% overlap
+    const chunkHeight = canvas.height / (numChunks - (numChunks - 1) * overlap);
+    const step = chunkHeight * (1 - overlap);
+
+    const blobs = [];
+    for (let i = 0; i < numChunks; i++) {
+        const yStart = i * step;
+        const actualHeight = Math.min(chunkHeight, canvas.height - yStart);
+
+        const chunkCanvas = document.createElement('canvas');
+        chunkCanvas.width = canvas.width;
+        chunkCanvas.height = actualHeight;
+        const ctx = chunkCanvas.getContext('2d');
+        ctx.drawImage(canvas, 0, yStart, canvas.width, actualHeight, 0, 0, canvas.width, actualHeight);
+
+        const blob = await new Promise(r => chunkCanvas.toBlob(r, 'image/jpeg', 0.9));
+        blobs.push(blob);
+    }
+    return blobs;
 }
 
 function findContentBounds(imageData) {

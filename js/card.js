@@ -165,19 +165,35 @@ export function updateReceiptCard(card, data) {
 function normalizeDate(dateStr) {
     if (!dateStr) return '';
 
-    // Replace common separators with dash
-    let clean = dateStr.replace(/[年月日\/\.]/g, '-');
-    // Remove trailing dash (often from '日')
-    clean = clean.replace(/-$/, '');
+    // 1. Replace all separators (dots, slashes, kanji) and spaces with a single dash
+    let clean = dateStr.replace(/[年月日\/\.\s]+/g, '-');
+    // 2. Remove leading/trailing dashes
+    clean = clean.replace(/^-+|-+$/g, '');
 
-    const parts = clean.split('-').filter(p => p.trim() !== '');
+    const parts = clean.split('-').map(p => p.trim()).filter(p => p !== '');
+
+    // We expect Year, Month, Day. 
+    // Sometimes AI returns them in different orders, but YYYY is easy to spot.
     if (parts.length >= 3) {
-        let [y, m, d] = parts;
-        // Basic padding
+        let y = '', m = '', d = '';
+
+        // Find 4-digit year or assume first
+        const yearIndex = parts.findIndex(p => p.length === 4);
+        if (yearIndex !== -1) {
+            y = parts[yearIndex];
+            // Take the other two as month/day in order
+            const others = parts.filter((_, i) => i !== yearIndex);
+            m = others[0];
+            d = others[1];
+        } else {
+            [y, m, d] = parts;
+            // Basic transformation for 2-digit years
+            if (y.length === 2) y = '20' + y;
+        }
+
+        // Padding
         m = m.padStart(2, '0');
         d = d.padStart(2, '0');
-        // Ensure 4-digit year
-        if (y.length === 2) y = '20' + y;
 
         const iso = `${y}-${m}-${d}`;
         // Validate it's a real date
