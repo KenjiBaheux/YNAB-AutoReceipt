@@ -1,7 +1,7 @@
 import { DOM } from './dom.js';
 import { CONFIG, getProcessedFiles, markAsProcessed } from './config.js';
 import { fetchYNABBudgets, fetchYNABAccounts, fetchYNABCategories, pushAllToYNAB } from './ynab.js';
-import { checkAIAvailability } from './ai.js';
+import { checkAIAvailability, resetAISession } from './ai.js';
 import { optimizeImageForAI, createVerticalChunks } from './image.js';
 import { createReceiptCard } from './card.js';
 import { runAIExtraction } from './ai.js';
@@ -30,6 +30,7 @@ async function init() {
         if (id) {
             await fetchYNABAccounts(id);
             await fetchYNABCategories(true); // Force refresh for new budget
+            resetAISession();
         }
     });
 
@@ -54,9 +55,10 @@ async function init() {
 
     const btnRefresh = document.getElementById('btn-refresh-categories');
     if (btnRefresh) {
-        btnRefresh.addEventListener('click', () => {
+        btnRefresh.addEventListener('click', async () => {
             if (DOM.apiPAT.value && DOM.budgetId.value) {
-                fetchYNABCategories(true);
+                await fetchYNABCategories(true);
+                resetAISession();
             } else {
                 showToast('Configure API settings first', 'info');
             }

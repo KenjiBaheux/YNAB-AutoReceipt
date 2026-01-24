@@ -84,10 +84,17 @@ export async function warmUpAI() {
     }
 }
 
+export function resetAISession() {
+    baseSession = null;
+    console.log('AI Session reset (will re-initialize with fresh settings on next use)');
+}
+
 export async function setupAI() {
     if (baseSession) return;
 
-    const ynabCategories = getYNABCategories();
+    const categoryData = getYNABCategories();
+    const categories = (categoryData && categoryData.categories) ? categoryData.categories : [];
+
     performance.mark('start-ai-setup');
 
     try {
@@ -113,8 +120,8 @@ export async function setupAI() {
                     - **Merchant**: Usually at the very top. It's often followed by an address or phone number. Do not confuse generic terms like "領収書" (Receipt) with the vendor name.
                     - **Category**: Suggest possible YNAB categories.
                     
-                    ${ynabCategories.length > 0
-                            ? `Use one of the following categories if applicable: ${ynabCategories.map(c => c.name).join(', ')}. IF NONE FIT, leave it empty.`
+                    ${categories.length > 0
+                            ? `Use one of the following categories if applicable: ${categories.map(c => c.name).join(', ')}. IF NONE FIT, leave it empty.`
                             : `Suggest generic categories like "Dining Out", "Groceries", "Transportation", "Entertainment", "Shopping".`}
                     ` }
             ],

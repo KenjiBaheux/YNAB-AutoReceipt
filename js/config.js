@@ -8,7 +8,7 @@ export const CONFIG = {
 
 // State
 let processedFiles = new Set(JSON.parse(localStorage.getItem(CONFIG.processedFilesKey) || '[]'));
-let ynabCategories = JSON.parse(localStorage.getItem(CONFIG.ynabCategoriesKey) || '[]');
+let ynabCategories = JSON.parse(localStorage.getItem(CONFIG.ynabCategoriesKey) || 'null');
 
 // Getters and Setters
 export function getProcessedFiles() {
