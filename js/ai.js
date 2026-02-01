@@ -4,6 +4,7 @@ import { updateReceiptCard } from './card.js'; // Circular dep, will create card
 import { getYNABCategories } from './config.js';
 
 let baseSession = null;
+let warmUpSession = null;
 
 export async function checkAIAvailability() {
     const dot = DOM.aiStatus.querySelector('.dot');
@@ -48,7 +49,7 @@ export async function checkAIAvailability() {
 }
 
 export async function warmUpAI() {
-    if (baseSession) return;
+    if (baseSession || warmUpSession) return;
 
     performance.mark('start-ai-warm-up');
     try {
@@ -73,6 +74,8 @@ export async function warmUpAI() {
         // Dummy prompt to trigger model loading/warming
         await dummySession.prompt([{ role: 'user', content: [{ type: 'text', value: '.' }] }]);
 
+        warmUpSession = dummySession;
+
         performance.mark('end-ai-warm-up');
         performance.measure('AI Warm-up duration', 'start-ai-warm-up', 'end-ai-warm-up');
 
@@ -85,8 +88,28 @@ export async function warmUpAI() {
 }
 
 export function resetAISession() {
-    baseSession = null;
+    if (baseSession) {
+        baseSession.destroy();
+        baseSession = null;
+    }
+    if (warmUpSession) {
+        warmUpSession.destroy();
+        warmUpSession = null;
+    }
     console.log('AI Session reset (will re-initialize with fresh settings on next use)');
+}
+
+export function destroyAISession() {
+    if (baseSession) {
+        baseSession.destroy();
+        baseSession = null;
+        console.log('Global AI Session destroyed');
+    }
+    if (warmUpSession) {
+        warmUpSession.destroy();
+        warmUpSession = null;
+        console.log('Warm-up AI Session destroyed');
+    }
 }
 
 export async function setupAI() {
@@ -115,7 +138,7 @@ export async function setupAI() {
                     Omit any explanations.
 
                     Hints for extractions:
-                    - **Total Amount**: Usually preceded by the symbol "¥", and typically presented in a larger or bold font and after the "合計" label. Japanese Yen does not use cents/decimals.
+                    - **Total Amount**: Usually preceded by the symbol "¥", and typically presented in a larger or bold font and after the "合計" label (do not confuse with "小計"). Japanese Yen does not use cents/decimals.
                     - **Date**: Look for "YYYY/MM/DD", "YYYY-MM-DD", or "YYYY年MM月DD日". It's often at the top and may be followed by a time (HH:mm).
                     - **Merchant**: Usually at the very top. It's often followed by an address or phone number. Do not confuse generic terms like "領収書" (Receipt) with the vendor name.
                     - **Category**: Suggest possible YNAB categories.
@@ -133,6 +156,13 @@ export async function setupAI() {
         performance.mark('end-ai-setup');
         const measure = performance.measure('AI Setup duration', 'start-ai-setup', 'end-ai-setup');
         console.log('AI Setup successful; duration:', measure.duration);
+
+        // Cleanup warm-up session now that we have a base session
+        if (warmUpSession) {
+            warmUpSession.destroy();
+            warmUpSession = null;
+            console.log('Warm-up session cleaned up after successful setup');
+        }
     } catch (err) {
         console.warn('AI Setup failed:', err);
     }
@@ -149,8 +179,9 @@ async function getAISession() {
 }
 
 export async function runAIExtraction(imageInput, card, fileName) {
+    let session = null;
     try {
-        const session = await getAISession();
+        session = await getAISession();
         const images = Array.isArray(imageInput) ? imageInput : [imageInput];
 
         if (images.length > 1) {
@@ -189,5 +220,9 @@ export async function runAIExtraction(imageInput, card, fileName) {
     } catch (err) {
         console.error('AI Processing error:', err);
         showToast(`AI failed for ${fileName}`, 'error');
+    } finally {
+        if (session) {
+            session.destroy();
+        }
     }
 }

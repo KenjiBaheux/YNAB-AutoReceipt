@@ -1,7 +1,7 @@
 import { DOM } from './dom.js';
 import { CONFIG, getProcessedFiles, markAsProcessed } from './config.js';
 import { fetchYNABBudgets, fetchYNABAccounts, fetchYNABCategories, pushAllToYNAB } from './ynab.js';
-import { checkAIAvailability, resetAISession } from './ai.js';
+import { checkAIAvailability, resetAISession, destroyAISession } from './ai.js';
 import { optimizeImageForAI, createVerticalChunks } from './image.js';
 import { createReceiptCard } from './card.js';
 import { runAIExtraction } from './ai.js';
@@ -64,6 +64,11 @@ async function init() {
             }
         });
     }
+
+    // Global cleanup
+    window.addEventListener('beforeunload', () => {
+        destroyAISession();
+    });
 
     setupModalListeners();
 }
