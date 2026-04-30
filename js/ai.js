@@ -53,10 +53,7 @@ export async function warmUpAI() {
 
     performance.mark('start-ai-warm-up');
     try {
-        const params = await LanguageModel.params();
-        const dummySession = await LanguageModel.create({
-            temperature: 0.0,
-            topK: 1,
+        const options = {
             expectedInputs: [
                 { type: "text", languages: ["en", "ja"] },
                 { type: "image" }
@@ -69,7 +66,14 @@ export async function warmUpAI() {
             expectedOutputs: [
                 { type: "text", languages: ["ja"] }
             ]
-        });
+        };
+
+        if (typeof LanguageModel.params === 'function') {
+            options.temperature = 0.0;
+            options.topK = 1;
+        }
+
+        const dummySession = await LanguageModel.create(options);
 
         // Dummy prompt to trigger model loading/warming
         await dummySession.prompt([{ role: 'user', content: [{ type: 'text', value: '.' }] }]);
@@ -121,10 +125,7 @@ export async function setupAI() {
     performance.mark('start-ai-setup');
 
     try {
-        const params = await LanguageModel.params();
-        baseSession = await LanguageModel.create({
-            temperature: 0.0,
-            topK: params.defaultTopK,
+        const options = {
             expectedInputs: [
                 { type: "text", languages: ["en", "ja"] },
                 { type: "image" }
@@ -151,7 +152,15 @@ export async function setupAI() {
             expectedOutputs: [
                 { type: "text", languages: ["ja"] }
             ]
-        });
+        };
+
+        if (typeof LanguageModel.params === 'function') {
+            const params = await LanguageModel.params();
+            options.temperature = 0.0;
+            options.topK = params.defaultTopK;
+        }
+
+        baseSession = await LanguageModel.create(options);
 
         performance.mark('end-ai-setup');
         const measure = performance.measure('AI Setup duration', 'start-ai-setup', 'end-ai-setup');
