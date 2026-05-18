@@ -1,6 +1,6 @@
 import { DOM } from './dom.js';
 import { CONFIG, getProcessedFiles, markAsProcessed } from './config.js';
-import { fetchYNABBudgets, fetchYNABAccounts, fetchYNABCategories, pushAllToYNAB } from './ynab.js';
+import { fetchYNABBudgets, fetchYNABAccounts, fetchYNABCategories, fetchYNABPayees, fetchYNABTransactionsAndBuildMap, pushAllToYNAB } from './ynab.js';
 import { checkAIAvailability, resetAISession, destroyAISession } from './ai.js';
 import { optimizeImageForAI, createVerticalChunks } from './image.js';
 import { createReceiptCard } from './card.js';
@@ -30,6 +30,8 @@ async function init() {
         if (id) {
             await fetchYNABAccounts(id);
             await fetchYNABCategories(true); // Force refresh for new budget
+            await fetchYNABPayees(true);
+            await fetchYNABTransactionsAndBuildMap(true);
             resetAISession();
         }
     });
@@ -47,17 +49,88 @@ async function init() {
         if (savedBudgetId && budgets.some(b => b.id === savedBudgetId)) {
             await fetchYNABAccounts(savedBudgetId);
             await fetchYNABCategories();
+            await fetchYNABPayees();
+            await fetchYNABTransactionsAndBuildMap();
         }
     }
 
     DOM.btnSync.addEventListener('click', handleFolderSync);
     DOM.btnPushAll.addEventListener('click', pushAllToYNAB);
+    DOM.btnClearQueue.addEventListener('click', handleClearQueue);
+
+    // Drag and Drop for initial state
+    DOM.initialState.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        DOM.initialState.classList.add('drag-active');
+    });
+
+    DOM.initialState.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        DOM.initialState.classList.remove('drag-active');
+    });
+
+    DOM.initialState.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        DOM.initialState.classList.remove('drag-active');
+        
+        const items = e.dataTransfer.items;
+        if (!items || items.length === 0) return;
+
+        let totalPending = 0;
+        const processedFiles = getProcessedFiles();
+
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            if (item.kind !== 'file') continue;
+
+            if (item.getAsFileSystemHandle) {
+                try {
+                    const handle = await item.getAsFileSystemHandle();
+                    if (handle.kind === 'directory') {
+                        directoryHandle = handle;
+                        await scanFolder();
+                        return; // scanFolder handles the UI update
+                    } else if (handle.kind === 'file') {
+                        if (isImage(handle.name) && !processedFiles.has(handle.name)) {
+                            totalPending++;
+                            processReceipt(handle);
+                        }
+                    }
+                } catch (err) {
+                    console.error("Error getting file system handle:", err);
+                }
+            } else {
+                // Fallback for older browsers (files only)
+                const file = item.getAsFile();
+                if (file && isImage(file.name) && !processedFiles.has(file.name)) {
+                    // Create a pseudo-handle for processReceipt
+                    const mockHandle = {
+                        name: file.name,
+                        getFile: async () => file
+                    };
+                    totalPending++;
+                    processReceipt(mockHandle);
+                }
+            }
+        }
+
+        if (totalPending > 0) {
+            DOM.processedCount.textContent = (parseInt(DOM.processedCount.textContent) || 0) + totalPending;
+            DOM.initialState.style.display = 'none';
+            DOM.receiptList.style.display = 'grid';
+            DOM.btnClearQueue.style.display = 'inline-flex';
+        } else if (items.length > 0) {
+            showToast('No new receipt images found in dropped items.', 'info');
+        }
+    });
 
     const btnRefresh = document.getElementById('btn-refresh-categories');
     if (btnRefresh) {
         btnRefresh.addEventListener('click', async () => {
             if (DOM.apiPAT.value && DOM.budgetId.value) {
                 await fetchYNABCategories(true);
+                await fetchYNABPayees(true);
+                await fetchYNABTransactionsAndBuildMap(true);
                 resetAISession();
             } else {
                 showToast('Configure API settings first', 'info');
@@ -247,9 +320,24 @@ async function scanFolder() {
     }
     DOM.processedCount.textContent = totalPending;
 
-    if (totalPending === 0) {
+    if (totalPending > 0) {
+        DOM.initialState.style.display = 'none';
+        DOM.receiptList.style.display = 'grid';
+        DOM.btnClearQueue.style.display = 'inline-flex';
+    } else {
         showToast('No new receipts found.', 'info');
     }
+}
+
+function handleClearQueue() {
+    DOM.receiptList.innerHTML = '';
+    DOM.receiptList.style.display = 'none';
+    DOM.initialState.style.display = 'flex';
+    DOM.btnClearQueue.style.display = 'none';
+    DOM.btnPushAll.style.display = 'none';
+    DOM.processedCount.textContent = '0';
+    directoryHandle = null;
+    updateProgressCounter();
 }
 
 function isImage(filename) {
@@ -278,9 +366,6 @@ async function processReceipt(fileHandle) {
 
     // Create UI Card
     const card = createReceiptCard(fileName, optimizedBlob, optimizedUrl, file, autoBounds);
-    if (DOM.receiptList.querySelector('.empty-state')) {
-        DOM.receiptList.innerHTML = '';
-    }
     DOM.receiptList.appendChild(card);
 
     await runAIExtraction(chunks || optimizedBlob, card, fileName);

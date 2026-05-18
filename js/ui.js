@@ -24,7 +24,7 @@ export function updateProgressCounter() {
 
     if (total === 0) {
         DOM.progressCounter.style.display = 'none';
-        DOM.btnPushAll.disabled = true;
+        DOM.btnPushAll.style.display = 'none';
         return;
     }
 
@@ -32,7 +32,12 @@ export function updateProgressCounter() {
     DOM.progressCounter.querySelector('.progress-text').textContent = `Analyzed ${analyzed}/${total}...`;
 
     // Enable Push All button if at least one receipt is analyzed
-    DOM.btnPushAll.disabled = analyzed === 0;
+    if (analyzed > 0) {
+        DOM.btnPushAll.style.display = 'inline-flex';
+        DOM.btnPushAll.disabled = false;
+    } else {
+        DOM.btnPushAll.style.display = 'none';
+    }
 }
 
 export function renderChips(container, values, onSelect) {
@@ -40,10 +45,17 @@ export function renderChips(container, values, onSelect) {
     // If only one (or no) value, nothing to suggest
     if (!values || values.length <= 1) return;
 
-    values.forEach((val, idx) => {
+    values.forEach((valObj, idx) => {
+        // Support for mixed AI vs Heuristic chips
+        const val = typeof valObj === 'object' ? valObj.value : valObj;
+        const isHeuristic = typeof valObj === 'object' ? valObj.isHeuristic : false;
+        const isFilename = typeof valObj === 'object' ? valObj.isFilename : false;
+
         const chip = document.createElement('span');
         chip.className = 'chip';
-        if (idx === 0) chip.classList.add('active');
+        if (idx === 0 && !isHeuristic && !isFilename) chip.classList.add('active');
+        if (isHeuristic) chip.classList.add('heuristic');
+        if (isFilename) chip.classList.add('filename');
 
         // Formatting for display
         let displayVal = val;

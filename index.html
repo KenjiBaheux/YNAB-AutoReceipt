@@ -63,22 +63,20 @@
                     <small id="category-count" style="color: rgba(255,255,255,0.7); white-space: nowrap;">0 cats</small>
                 </div>
             </div>
+            </div>
+        </section>
 
-            <div class="actions">
-                <button id="btn-sync-folder" class="btn primary">
-                    <span class="icon">📁</span>
-                    Connect Receipt Folder
-                </button>
-                <button id="btn-push-all" class="btn success" disabled>
-                    <span class="icon">📤</span>
-                    Push All to YNAB
-                </button>
-                <div id="progress-counter" class="progress-counter" style="display: none;">
-                    <span class="progress-text">Analyzed 0/0...</span>
-                </div>
+        <section class="ai-status glass">
+            <div class="settings-header" style="display: flex; align-items: center; gap: 10px; margin-bottom: 1rem;">
+                <h3 style="margin: 0; font-size: 1.1rem; color: rgba(255,255,255,0.9);">AI Engine</h3>
+            </div>
+            <div class="status-container" style="display: flex; gap: 20px; align-items: center;">
                 <div id="ai-status" class="status-indicator">
                     <span class="dot"></span>
                     <span class="status-text">Checking AI status...</span>
+                </div>
+                <div id="progress-counter" class="progress-counter" style="display: none;">
+                    <span class="progress-text">Analyzed 0/0...</span>
                 </div>
             </div>
         </section>
@@ -86,16 +84,32 @@
         <section class="receipts-explorer glass">
             <div class="explorer-header">
                 <h2>Pending Transactions</h2>
-                <div class="stats">
-                    <span id="processed-count">0</span> files currently in queue
+                <div class="explorer-actions" style="display: flex; gap: 10px; align-items: center;">
+                    <button id="btn-clear-queue" class="btn btn-small" style="display: none;" title="Clear Queue">
+                        <span class="icon">🗑️</span> Clear Queue
+                    </button>
+                    <button id="btn-push-all" class="btn success" style="display: none;">
+                        <span class="icon">📤</span>
+                        Push All to YNAB
+                    </button>
+                    <div class="stats">
+                        <span id="processed-count">0</span> files currently in queue
+                    </div>
                 </div>
             </div>
 
-            <div id="receipt-list" class="receipt-grid">
+            <div id="initial-state" class="empty-state drop-zone">
+                <span class="icon">📥</span>
+                <h3>Select Receipts Folder</h3>
+                <p>Choose a folder on your computer where you save your scanned receipts (images only). The app will
+                    locally process the receipts.</p>
+                <button id="btn-sync-folder" class="btn secondary">
+                    Choose Folder...
+                </button>
+            </div>
+
+            <div id="receipt-list" class="receipt-grid" style="display: none;">
                 <!-- Receipt items will be injected here -->
-                <div class="empty-state">
-                    <p>No receipts loaded yet. Choose a folder to start.</p>
-                </div>
             </div>
     </main>
 

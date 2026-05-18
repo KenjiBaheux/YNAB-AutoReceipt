@@ -126,6 +126,62 @@ input:focus {
     border-radius: 15px;
 }
 
+.drop-zone {
+    flex-direction: column;
+    padding: 4rem 2rem;
+    transition: all 0.3s ease;
+    background: rgba(255, 255, 255, 0.02);
+    text-align: center;
+}
+
+.drop-zone:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 15px rgba(0, 229, 255, 0.1);
+}
+
+.drop-zone.drag-active {
+    background: rgba(0, 229, 255, 0.1);
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 20px rgba(0, 229, 255, 0.2);
+    transform: scale(1.02);
+}
+
+.drop-zone .icon {
+    font-size: 3.5rem;
+    margin-bottom: 1rem;
+    opacity: 0.8;
+}
+
+.drop-zone h3 {
+    margin: 0 0 0.5rem 0;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 1.5rem;
+    font-style: normal;
+}
+
+.drop-zone p {
+    color: rgba(255, 255, 255, 0.6);
+    max-width: 450px;
+    margin: 0 auto 2rem auto;
+    line-height: 1.5;
+    font-style: normal;
+}
+
+.btn.secondary {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #fff;
+    box-shadow: none;
+    font-weight: 500;
+}
+
+.btn.secondary:hover {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.3);
+    transform: translateY(-2px);
+}
+
 /* Toast */
 .toast-container {
     position: fixed;
