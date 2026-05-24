@@ -4,9 +4,11 @@ export const DOM = {
     accountId: document.getElementById('ynab-account-id'),
     btnSync: document.getElementById('btn-sync-folder'),
     btnPushAll: document.getElementById('btn-push-all'),
+    btnClearQueue: document.getElementById('btn-clear-queue'),
     progressCounter: document.getElementById('progress-counter'),
     aiStatus: document.getElementById('ai-status'),
     receiptList: document.getElementById('receipt-list'),
+    initialState: document.getElementById('initial-state'),
     processedCount: document.getElementById('processed-count'),
     toastContainer: document.getElementById('toast-container'),
     // Modal Elements

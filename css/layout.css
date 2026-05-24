@@ -27,8 +27,9 @@ header {
     font-size: 1.1rem;
 }
 
-.controls {
-    margin-bottom: 2.5rem;
+.controls,
+.ai-status {
+    margin-bottom: 1.25rem;
 }
 
 .api-settings {

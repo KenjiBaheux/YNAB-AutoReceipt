@@ -1,6 +1,6 @@
 import { DOM } from './dom.js';
 import { showToast, updateProgressCounter } from './ui.js';
-import { setYNABCategories, getYNABCategories, markAsProcessed, CONFIG } from './config.js';
+import { setYNABCategories, getYNABCategories, markAsProcessed, CONFIG, getYNABPayees, setYNABPayees, getYNABPayeeCategories, setYNABPayeeCategories } from './config.js';
 
 export async function fetchYNABBudgets() {
     const apiPAT = DOM.apiPAT.value;
@@ -145,6 +145,157 @@ function updateCategoryUI(categories) {
     if (countLabel) {
         countLabel.textContent = `${categories.length} cats`;
     }
+}
+
+export async function fetchYNABPayees(forceRefresh = false) {
+    const apiPAT = DOM.apiPAT.value;
+    const budgetId = DOM.budgetId.value;
+
+    if (!apiPAT || !budgetId) return [];
+
+    const cached = getYNABPayees();
+    if (!forceRefresh && cached && cached.budgetId === budgetId && cached.payees.length > 0) {
+        console.log(`Using ${cached.payees.length} cached YNAB payees for budget ${budgetId}`);
+        return cached.payees;
+    }
+
+    try {
+        const response = await fetch(`https://api.ynab.com/v1/budgets/${budgetId}/payees`, {
+            headers: { 'Authorization': `Bearer ${apiPAT}` }
+        });
+
+        if (!response.ok) throw new Error('Failed to fetch payees');
+
+        const data = await response.json();
+        // Ignore deleted payees and transfer payees (which have transfer_account_id)
+        const payeesList = data.data.payees
+            .filter(p => !p.deleted && !p.transfer_account_id)
+            .map(p => p.name);
+
+        setYNABPayees({ budgetId, payees: payeesList });
+        console.log(`Loaded ${payeesList.length} YNAB payees`);
+        return payeesList;
+    } catch (err) {
+        console.error('Error loading YNAB payees:', err);
+        return [];
+    }
+}
+
+export async function fetchYNABTransactionsAndBuildMap(forceRefresh = false) {
+    const apiPAT = DOM.apiPAT.value;
+    const budgetId = DOM.budgetId.value;
+
+    if (!apiPAT || !budgetId) return null;
+
+    const cached = getYNABPayeeCategories();
+    if (!forceRefresh && cached && cached.budgetId === budgetId && cached.map) {
+        console.log(`Using cached YNAB payee->category map for budget ${budgetId}`);
+        return cached.map;
+    }
+
+    try {
+        const response = await fetch(`https://api.ynab.com/v1/budgets/${budgetId}/transactions`, {
+            headers: { 'Authorization': `Bearer ${apiPAT}` }
+        });
+
+        if (!response.ok) throw new Error('Failed to fetch transactions');
+
+        const data = await response.json();
+        const transactions = data.data.transactions;
+
+        const freqMap = {};
+        for (const t of transactions) {
+            if (t.deleted) continue;
+            const payee = t.payee_name;
+            const category = t.category_name;
+            
+            // Skip transfers and uncategorized/split lines if they don't have clear names
+            if (!payee || !category || category === 'Uncategorized' || t.transfer_account_id) continue;
+
+            if (!freqMap[payee]) {
+                freqMap[payee] = {};
+            }
+            freqMap[payee][category] = (freqMap[payee][category] || 0) + 1;
+        }
+
+        const finalMap = {};
+        for (const payee in freqMap) {
+            let maxCount = 0;
+            let bestCategory = null;
+            for (const category in freqMap[payee]) {
+                if (freqMap[payee][category] > maxCount) {
+                    maxCount = freqMap[payee][category];
+                    bestCategory = category;
+                }
+            }
+            if (bestCategory) {
+                finalMap[payee] = bestCategory;
+            }
+        }
+
+        setYNABPayeeCategories({ budgetId, map: finalMap });
+        console.log(`Built Payee->Category map with ${Object.keys(finalMap).length} payees`);
+        return finalMap;
+
+    } catch (err) {
+        console.error('Error fetching transactions for map:', err);
+        return null;
+    }
+}
+
+function levenshteinDistance(a, b) {
+    const matrix = [];
+    if (a.length === 0) return b.length;
+    if (b.length === 0) return a.length;
+
+    for (let i = 0; i <= b.length; i++) {
+        matrix[i] = [i];
+    }
+    for (let j = 0; j <= a.length; j++) {
+        matrix[0][j] = j;
+    }
+
+    for (let i = 1; i <= b.length; i++) {
+        for (let j = 1; j <= a.length; j++) {
+            if (b.charAt(i - 1) === a.charAt(j - 1)) {
+                matrix[i][j] = matrix[i - 1][j - 1];
+            } else {
+                matrix[i][j] = Math.min(
+                    matrix[i - 1][j - 1] + 1, // substitution
+                    Math.min(matrix[i][j - 1] + 1, matrix[i - 1][j] + 1) // insertion, deletion
+                );
+            }
+        }
+    }
+    return matrix[b.length][a.length];
+}
+
+export function findClosestPayee(target, payeesList) {
+    if (!target || !payeesList || payeesList.length === 0) return null;
+    
+    let closest = null;
+    let minDistance = Infinity;
+    const normalizedTarget = target.toLowerCase().trim();
+
+    for (const payee of payeesList) {
+        const normalizedPayee = payee.toLowerCase().trim();
+        // Exact match case
+        if (normalizedTarget === normalizedPayee) {
+            return payee; // Found exact, return immediately
+        }
+        
+        const distance = levenshteinDistance(normalizedTarget, normalizedPayee);
+        if (distance < minDistance) {
+            minDistance = distance;
+            closest = payee;
+        }
+    }
+
+    // Heuristic threshold: Max 3 edits, or proportional to length
+    if (minDistance > 0 && minDistance <= Math.max(3, normalizedTarget.length * 0.4)) {
+        return closest;
+    }
+    return null;
 }
 
 export function prepareTransactionData(card, ynabCategories, accountId) {

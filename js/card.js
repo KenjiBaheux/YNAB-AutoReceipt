@@ -1,7 +1,8 @@
 import { DOM } from './dom.js';
 import { pushToYNAB } from './ynab.js';
+import { findClosestPayee } from './ynab.js';
 import { renderChips, updateProgressCounter } from './ui.js';
-import { markAsProcessed } from './config.js';
+import { markAsProcessed, getYNABPayees, getYNABPayeeCategories } from './config.js';
 import { setActiveRedactionCard, setupCroppingUI, renderRedactions, updateModalToolbar, setupRedactionCanvas, clearRedactionCanvas } from './modal.js';
 
 let cardCounter = 0;
@@ -140,6 +141,9 @@ export function updateReceiptCard(card, data) {
     const amounts = dedupe(data.amounts);
     const categories = dedupe(data.categories);
 
+    const fileName = card.dataset.merchant || '';
+    const fileInfo = extractInfoFromFilename(fileName);
+
     // Set primary values (most likely)
     card.querySelector('.merchant-input').value = merchants[0] || '';
     card.querySelector('.date-input').value = normalizeDate(dates[0]) || '';
@@ -147,17 +151,64 @@ export function updateReceiptCard(card, data) {
     card.querySelector('.category-input').value = categories[0] || '';
     card.querySelector('.btn-push').disabled = false;
 
+    // Compute chips for merchants
+    const merchantChips = merchants.map(m => ({ value: m, isHeuristic: false }));
+    if (fileInfo && fileInfo.payee) {
+        if (!merchants.includes(fileInfo.payee)) {
+            merchantChips.push({ value: fileInfo.payee, isFilename: true });
+        }
+    }
+
+    const cachedPayees = getYNABPayees();
+    if (merchants[0] && cachedPayees && cachedPayees.payees) {
+        const closest = findClosestPayee(merchants[0], cachedPayees.payees);
+        if (closest && !merchants.includes(closest) && !(fileInfo && fileInfo.payee === closest)) {
+            // Add as a heuristic chip
+            merchantChips.push({ value: closest, isHeuristic: true });
+        }
+    }
+
+    // Compute chips for categories
+    const categoryChips = categories.map(c => ({ value: c, isHeuristic: false }));
+    const cachedPayeeCats = getYNABPayeeCategories();
+    const targetPayee = (merchantChips.find(m => m.isHeuristic) || merchantChips[0])?.value;
+
+    if (targetPayee && cachedPayeeCats && cachedPayeeCats.map) {
+        const typicalCategory = cachedPayeeCats.map[targetPayee];
+        if (typicalCategory && !categories.includes(typicalCategory)) {
+            categoryChips.push({ value: typicalCategory, isHeuristic: true });
+        }
+    }
+
+    // Compute chips for dates
+    const dateChips = dates.map(d => ({ value: d, isHeuristic: false }));
+    if (fileInfo && fileInfo.date) {
+        const normalizedFileDate = normalizeDate(fileInfo.date);
+        const isDuplicateDate = dates.some(d => normalizeDate(d) === normalizedFileDate);
+        if (!isDuplicateDate) {
+            dateChips.push({ value: fileInfo.date, isFilename: true });
+        }
+    }
+
+    // Compute chips for amounts
+    const amountChips = amounts.map(a => ({ value: a, isHeuristic: false }));
+    if (fileInfo && fileInfo.amount) {
+        if (!amounts.some(a => String(a) === fileInfo.amount)) {
+            amountChips.push({ value: fileInfo.amount, isFilename: true });
+        }
+    }
+
     // Render alternative chips
-    renderChips(card.querySelector('.merchants-chips'), merchants, val => {
+    renderChips(card.querySelector('.merchants-chips'), merchantChips, val => {
         card.querySelector('.merchant-input').value = val;
     });
-    renderChips(card.querySelector('.dates-chips'), dates, val => {
+    renderChips(card.querySelector('.dates-chips'), dateChips, val => {
         card.querySelector('.date-input').value = normalizeDate(val);
     });
-    renderChips(card.querySelector('.amounts-chips'), amounts, val => {
+    renderChips(card.querySelector('.amounts-chips'), amountChips, val => {
         card.querySelector('.amount-input').value = val;
     });
-    renderChips(card.querySelector('.categories-chips'), categories, val => {
+    renderChips(card.querySelector('.categories-chips'), categoryChips, val => {
         card.querySelector('.category-input').value = val;
     });
 }
@@ -202,4 +253,35 @@ function normalizeDate(dateStr) {
         }
     }
     return ''; // Return empty if invalid to avoid browser warnings
+}
+
+function extractInfoFromFilename(fileName) {
+    if (!fileName) return null;
+    const name = fileName.replace(/\.[^/.]+$/, ""); // remove extension
+    const dateMatch = name.match(/^(\d{4}_\d{2}_\d{2})_+(.*)$/);
+    if (!dateMatch) return null;
+
+    const dateStr = dateMatch[1].replace(/_/g, '-'); // YYYY-MM-DD
+    let rest = dateMatch[2];
+
+    const amountMatch = rest.match(/_+([0-9()][0-9(),_]*|[^_]+)$/);
+    let payee = rest;
+    let amountStr = null;
+
+    if (amountMatch) {
+        amountStr = amountMatch[1];
+        payee = rest.substring(0, rest.length - amountMatch[0].length);
+    }
+
+    payee = payee.replace(/^_+|_+$/g, ''); // trim underscores
+    if (amountStr) {
+        // remove formatting like commas, underscores, parentheses
+        amountStr = amountStr.replace(/[_,()]/g, '');
+    }
+
+    return {
+        date: dateStr,
+        payee: payee,
+        amount: amountStr
+    };
 }
