@@ -5,6 +5,8 @@ import { getYNABCategories } from './config.js';
 
 let baseSession = null;
 let warmUpSession = null;
+let setupPromise = null;
+let aiQueuePromise = Promise.resolve();
 
 export async function checkAIAvailability() {
     const dot = DOM.aiStatus.querySelector('.dot');
@@ -92,6 +94,7 @@ export async function warmUpAI() {
 }
 
 export function resetAISession() {
+    setupPromise = null;
     if (baseSession) {
         baseSession.destroy();
         baseSession = null;
@@ -104,6 +107,7 @@ export function resetAISession() {
 }
 
 export function destroyAISession() {
+    setupPromise = null;
     if (baseSession) {
         baseSession.destroy();
         baseSession = null;
@@ -118,62 +122,75 @@ export function destroyAISession() {
 
 export async function setupAI() {
     if (baseSession) return;
+    if (setupPromise) {
+        await setupPromise;
+        return;
+    }
 
-    const categoryData = getYNABCategories();
-    const categories = (categoryData && categoryData.categories) ? categoryData.categories : [];
+    setupPromise = (async () => {
+        const categoryData = getYNABCategories();
+        const categories = (categoryData && categoryData.categories) ? categoryData.categories : [];
 
-    performance.mark('start-ai-setup');
+        performance.mark('start-ai-setup');
+
+        try {
+            const options = {
+                expectedInputs: [
+                    { type: "text", languages: ["en", "ja"] },
+                    { type: "image" }
+                ],
+                initialPrompts: [
+                    {
+                        role: 'system', content: `You are a Japanese receipt parser. Extract Merchant name, Date (YYYY-MM-DD), Total Amount as a whole integer, and Category.
+                        
+                        Provide up to 3 candidates for each field, ordered by likelihood (most likely first).
+                        If a field is very certain, you can provide fewer candidates.
+                        Omit any explanations.
+
+                        Hints for extractions:
+                        - **Total Amount**: Usually preceded by the symbol "¥", and typically presented in a larger or bold font and after the "合計" label (do not confuse with "小計"). Japanese Yen does not use cents/decimals.
+                        - **Date**: Look for "YYYY/MM/DD", "YYYY-MM-DD", or "YYYY年MM月DD日". It's often at the top and may be followed by a time (HH:mm).
+                        - **Merchant**: Usually at the very top. It's often followed by an address or phone number. Do not confuse generic terms like "領収書" (Receipt) with the vendor name.
+                        - **Category**: Suggest possible YNAB categories.
+                        
+                        ${categories.length > 0
+                                ? `Use one of the following categories if applicable: ${categories.map(c => c.name).join(', ')}. IF NONE FIT, leave it empty.`
+                                : `Suggest generic categories like "Dining Out", "Groceries", "Transportation", "Entertainment", "Shopping".`}
+                        ` }
+                ],
+                expectedOutputs: [
+                    { type: "text", languages: ["ja"] }
+                ]
+            };
+
+            if (typeof LanguageModel.params === 'function') {
+                const params = await LanguageModel.params();
+                options.temperature = 0.0;
+                options.topK = params.defaultTopK;
+            }
+
+            baseSession = await LanguageModel.create(options);
+
+            performance.mark('end-ai-setup');
+            const measure = performance.measure('AI Setup duration', 'start-ai-setup', 'end-ai-setup');
+            console.log('AI Setup successful; duration:', measure.duration);
+
+            // Cleanup warm-up session now that we have a base session
+            if (warmUpSession) {
+                warmUpSession.destroy();
+                warmUpSession = null;
+                console.log('Warm-up session cleaned up after successful setup');
+            }
+        } catch (err) {
+            console.warn('AI Setup failed:', err);
+            throw err;
+        }
+    })();
 
     try {
-        const options = {
-            expectedInputs: [
-                { type: "text", languages: ["en", "ja"] },
-                { type: "image" }
-            ],
-            initialPrompts: [
-                {
-                    role: 'system', content: `You are a Japanese receipt parser. Extract Merchant name, Date (YYYY-MM-DD), Total Amount as a whole integer, and Category.
-                    
-                    Provide up to 3 candidates for each field, ordered by likelihood (most likely first).
-                    If a field is very certain, you can provide fewer candidates.
-                    Omit any explanations.
-
-                    Hints for extractions:
-                    - **Total Amount**: Usually preceded by the symbol "¥", and typically presented in a larger or bold font and after the "合計" label (do not confuse with "小計"). Japanese Yen does not use cents/decimals.
-                    - **Date**: Look for "YYYY/MM/DD", "YYYY-MM-DD", or "YYYY年MM月DD日". It's often at the top and may be followed by a time (HH:mm).
-                    - **Merchant**: Usually at the very top. It's often followed by an address or phone number. Do not confuse generic terms like "領収書" (Receipt) with the vendor name.
-                    - **Category**: Suggest possible YNAB categories.
-                    
-                    ${categories.length > 0
-                            ? `Use one of the following categories if applicable: ${categories.map(c => c.name).join(', ')}. IF NONE FIT, leave it empty.`
-                            : `Suggest generic categories like "Dining Out", "Groceries", "Transportation", "Entertainment", "Shopping".`}
-                    ` }
-            ],
-            expectedOutputs: [
-                { type: "text", languages: ["ja"] }
-            ]
-        };
-
-        if (typeof LanguageModel.params === 'function') {
-            const params = await LanguageModel.params();
-            options.temperature = 0.0;
-            options.topK = params.defaultTopK;
-        }
-
-        baseSession = await LanguageModel.create(options);
-
-        performance.mark('end-ai-setup');
-        const measure = performance.measure('AI Setup duration', 'start-ai-setup', 'end-ai-setup');
-        console.log('AI Setup successful; duration:', measure.duration);
-
-        // Cleanup warm-up session now that we have a base session
-        if (warmUpSession) {
-            warmUpSession.destroy();
-            warmUpSession = null;
-            console.log('Warm-up session cleaned up after successful setup');
-        }
-    } catch (err) {
-        console.warn('AI Setup failed:', err);
+        await setupPromise;
+    } finally {
+        setupPromise = null;
     }
 }
 
@@ -188,6 +205,18 @@ async function getAISession() {
 }
 
 export async function runAIExtraction(imageInput, card, fileName) {
+    const currentPromise = aiQueuePromise;
+    let resolveQueue;
+    aiQueuePromise = new Promise(resolve => {
+        resolveQueue = resolve;
+    });
+
+    try {
+        await currentPromise;
+    } catch (err) {
+        console.warn('Previous AI extraction failed, starting next:', err);
+    }
+
     let session = null;
     try {
         session = await getAISession();
@@ -231,7 +260,12 @@ export async function runAIExtraction(imageInput, card, fileName) {
         showToast(`AI failed for ${fileName}`, 'error');
     } finally {
         if (session) {
-            session.destroy();
+            try {
+                session.destroy();
+            } catch (destroyErr) {
+                console.warn('Failed to destroy session:', destroyErr);
+            }
         }
+        resolveQueue();
     }
 }
