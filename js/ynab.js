@@ -135,27 +135,49 @@ export async function fetchYNABCategories(forceRefresh = false) {
     }
 }
 
+function escapeHTML(str) {
+    if (!str) return '';
+    return str.replace(/[&<>'"]/g, 
+        tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
+    );
+}
+
 function updateCategoryUI(categories) {
     const list = document.getElementById('ynab-category-list');
     const countLabel = document.getElementById('category-count');
 
     if (list) {
-        list.innerHTML = categories.map(c => `<option value="${c.name}">${c.group}: ${c.name}</option>`).join('');
+        list.innerHTML = categories.map(c => `<option value="${escapeHTML(c.name)}">${escapeHTML(c.group)}: ${escapeHTML(c.name)}</option>`).join('');
     }
     if (countLabel) {
         countLabel.textContent = `${categories.length} cats`;
     }
 }
 
+export function updatePayeeUI(payees) {
+    const list = document.getElementById('ynab-merchant-list');
+    if (list) {
+        const arr = Array.isArray(payees) ? payees : [];
+        const displayLimit = 100;
+        const displayPayees = arr.slice(0, displayLimit);
+        list.innerHTML = displayPayees.map(p => `<option value="${escapeHTML(p)}"></option>`).join('');
+    }
+}
+
+
 export async function fetchYNABPayees(forceRefresh = false) {
     const apiPAT = DOM.apiPAT.value;
     const budgetId = DOM.budgetId.value;
 
-    if (!apiPAT || !budgetId) return [];
+    if (!apiPAT || !budgetId) {
+        updatePayeeUI([]);
+        return [];
+    }
 
     const cached = getYNABPayees();
     if (!forceRefresh && cached && cached.budgetId === budgetId && cached.payees.length > 0) {
         console.log(`Using ${cached.payees.length} cached YNAB payees for budget ${budgetId}`);
+        updatePayeeUI(cached.payees);
         return cached.payees;
     }
 
@@ -174,6 +196,7 @@ export async function fetchYNABPayees(forceRefresh = false) {
 
         setYNABPayees({ budgetId, payees: payeesList });
         console.log(`Loaded ${payeesList.length} YNAB payees`);
+        updatePayeeUI(payeesList);
         return payeesList;
     } catch (err) {
         console.error('Error loading YNAB payees:', err);
@@ -190,6 +213,10 @@ export async function fetchYNABTransactionsAndBuildMap(forceRefresh = false) {
     const cached = getYNABPayeeCategories();
     if (!forceRefresh && cached && cached.budgetId === budgetId && cached.map) {
         console.log(`Using cached YNAB payee->category map for budget ${budgetId}`);
+        const cachedPayeesData = getYNABPayees();
+        if (cachedPayeesData && cachedPayeesData.budgetId === budgetId && cachedPayeesData.payees) {
+            updatePayeeUI(cachedPayeesData.payees);
+        }
         return cached.map;
     }
 
@@ -204,6 +231,7 @@ export async function fetchYNABTransactionsAndBuildMap(forceRefresh = false) {
         const transactions = data.data.transactions;
 
         const freqMap = {};
+        const payeeCountMap = {};
         for (const t of transactions) {
             if (t.deleted) continue;
             const payee = t.payee_name;
@@ -216,6 +244,8 @@ export async function fetchYNABTransactionsAndBuildMap(forceRefresh = false) {
                 freqMap[payee] = {};
             }
             freqMap[payee][category] = (freqMap[payee][category] || 0) + 1;
+
+            payeeCountMap[payee] = (payeeCountMap[payee] || 0) + 1;
         }
 
         const finalMap = {};
@@ -235,6 +265,23 @@ export async function fetchYNABTransactionsAndBuildMap(forceRefresh = false) {
 
         setYNABPayeeCategories({ budgetId, map: finalMap });
         console.log(`Built Payee->Category map with ${Object.keys(finalMap).length} payees`);
+
+        // Sort payees by frequency
+        const cachedPayeesData = getYNABPayees();
+        if (cachedPayeesData && cachedPayeesData.budgetId === budgetId && cachedPayeesData.payees) {
+            const payeesList = [...cachedPayeesData.payees];
+            payeesList.sort((a, b) => {
+                const countA = payeeCountMap[a] || 0;
+                const countB = payeeCountMap[b] || 0;
+                if (countB !== countA) {
+                    return countB - countA;
+                }
+                return a.localeCompare(b);
+            });
+            setYNABPayees({ budgetId, payees: payeesList });
+            updatePayeeUI(payeesList);
+        }
+
         return finalMap;
 
     } catch (err) {

@@ -28,7 +28,7 @@ export function createReceiptCard(fileName, optimizedBlob, displayUrl, originalF
         <div class="receipt-info">
             <div class="field-group">
                 <label>Merchant</label>
-                <input type="text" class="edit-input merchant-input" placeholder="Analyzing...">
+                <input type="text" class="edit-input merchant-input" placeholder="Analyzing..." list="ynab-merchant-list">
                 <div class="suggestion-chips merchants-chips"></div>
             </div>
             <div class="field-group">
