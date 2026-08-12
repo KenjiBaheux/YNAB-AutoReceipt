@@ -15,7 +15,7 @@
     gap: 0.5rem;
 }
 
-input {
+input, select, textarea {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid var(--glass-border);
     border-radius: 10px;
@@ -25,10 +25,15 @@ input {
     transition: all 0.3s ease;
 }
 
-input:focus {
+input:focus, select:focus, textarea:focus {
     outline: none;
     border-color: var(--accent-primary);
     background: rgba(255, 255, 255, 0.08);
+}
+
+select option {
+    background: #0b0e14;
+    color: #fff;
 }
 
 .btn {
@@ -91,7 +96,6 @@ input:focus {
     from {
         opacity: 0.3;
     }
-
     to {
         opacity: 1;
     }
@@ -215,4 +219,290 @@ input:focus {
 
 .toast.error {
     border-color: var(--error);
+}
+
+/* Settings Tabs */
+.settings-tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 1.5rem;
+    border-bottom: 1px solid var(--glass-border);
+    padding-bottom: 5px;
+    overflow-x: auto;
+    flex-shrink: 0;
+}
+
+.tab-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 0.5rem 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.3s ease;
+    font-family: var(--font-heading);
+    font-size: 0.95rem;
+    white-space: nowrap;
+}
+
+.tab-btn:hover {
+    color: #fff;
+}
+
+.tab-btn.active {
+    color: var(--accent-primary);
+    border-bottom-color: var(--accent-primary);
+}
+
+.tab-content {
+    display: none;
+    flex-direction: column;
+    gap: 1.5rem;
+    overflow-y: auto;
+    flex-grow: 1;
+    padding-right: 8px;
+}
+
+.tab-content.active {
+    display: flex;
+}
+
+/* Custom scrollbars for settings UI */
+.tab-content::-webkit-scrollbar,
+.settings-tabs::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+.tab-content::-webkit-scrollbar-track,
+.settings-tabs::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.tab-content::-webkit-scrollbar-thumb,
+.settings-tabs::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    transition: background-color 0.3s;
+}
+
+.tab-content::-webkit-scrollbar-thumb:hover,
+.settings-tabs::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 229, 255, 0.3);
+}
+
+/* Firefox scrollbars */
+.tab-content,
+.settings-tabs {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+.tab-intro {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin: 0 0 1rem 0;
+    line-height: 1.5;
+}
+
+/* Toggle Switch */
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    flex-shrink: 0;
+}
+
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background-color: rgba(255, 255, 255, 0.08);
+    transition: .3s;
+    border-radius: 24px;
+    border: 1px solid var(--glass-border);
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 16px;
+    width: 16px;
+    left: 3px;
+    bottom: 3px;
+    background-color: #fff;
+    transition: .3s;
+    border-radius: 50%;
+}
+
+input:checked + .slider {
+    background-color: var(--accent-primary);
+    box-shadow: 0 0 8px rgba(0, 229, 255, 0.3);
+}
+
+input:checked + .slider:before {
+    transform: translateX(20px);
+}
+
+/* Heuristics Configuration */
+.heuristics-options {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+.heuristic-card {
+    padding: 1.25rem !important;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.01);
+}
+
+.heuristic-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.heuristic-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.heuristic-title h4 {
+    margin: 0;
+    font-size: 1.05rem;
+    font-family: var(--font-heading);
+    color: rgba(255, 255, 255, 0.95);
+}
+
+.heuristic-body {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px dashed var(--glass-border);
+}
+
+.heuristic-body p {
+    margin: 0 0 1rem 0;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    line-height: 1.5;
+}
+
+.legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.legend-dot.filename {
+    background-color: #ffcc66;
+    box-shadow: 0 0 8px rgba(255, 180, 50, 0.6);
+}
+
+.legend-dot.database {
+    background-color: #d4a5ff;
+    box-shadow: 0 0 8px rgba(180, 100, 255, 0.6);
+}
+
+/* Interactive Regex Previewer */
+.regex-previewer {
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-top: 1.25rem;
+    border: 1px solid var(--glass-border);
+}
+
+.regex-previewer h5 {
+    margin: 0 0 0.75rem 0;
+    font-size: 0.9rem;
+    color: var(--accent-primary);
+    font-family: var(--font-heading);
+}
+
+.regex-test-results {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px dashed var(--glass-border);
+}
+
+.result-row {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.result-val {
+    display: block;
+    font-family: monospace;
+    color: #fff;
+    font-size: 0.85rem;
+    margin-top: 4px;
+    word-break: break-all;
+}
+
+/* Legend for Chips */
+.chip-legend {
+    padding: 1.25rem !important;
+    border-radius: 16px;
+    margin-top: 1.5rem;
+}
+
+.chip-legend h4 {
+    margin: 0 0 1rem 0;
+    font-size: 1rem;
+    font-family: var(--font-heading);
+}
+
+.legend-items {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.chip-example {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.6rem;
+    border-radius: 12px;
+    width: 75px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.chip-example.active {
+    background: rgba(0, 229, 255, 0.15);
+    color: var(--accent-primary);
+    border: 1px solid rgba(0, 229, 255, 0.3);
+}
+
+.chip-example.filename {
+    background: rgba(255, 180, 50, 0.15);
+    color: #ffcc66;
+    border: 1px solid rgba(255, 180, 50, 0.3);
+}
+
+.chip-example.heuristic {
+    background: rgba(180, 100, 255, 0.15);
+    color: #d4a5ff;
+    border: 1px solid rgba(180, 100, 255, 0.3);
 }

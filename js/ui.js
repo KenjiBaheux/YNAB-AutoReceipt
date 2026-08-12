@@ -20,11 +20,18 @@ export function showToast(message, type = 'info', duration = 3000) {
 export function updateProgressCounter() {
     const allCards = Array.from(DOM.receiptList.querySelectorAll('.receipt-card'));
     const total = allCards.length;
-    const analyzed = allCards.filter(card => !card.classList.contains('processing')).length;
+    
+    // Sync the queue count label with the actual number of cards in DOM
+    DOM.processedCount.textContent = total;
+
+    const analyzed = allCards.filter(card => !card.classList.contains('processing') && !card.classList.contains('queued')).length;
 
     if (total === 0) {
         DOM.progressCounter.style.display = 'none';
         DOM.btnPushAll.style.display = 'none';
+        DOM.receiptList.style.display = 'none';
+        DOM.initialState.style.display = 'flex';
+        DOM.btnClearQueue.style.display = 'none';
         return;
     }
 

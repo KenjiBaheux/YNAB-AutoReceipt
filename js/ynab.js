@@ -59,19 +59,32 @@ export async function fetchYNABAccounts(budgetId) {
 }
 
 function updateBudgetDropdown(budgets) {
-    const select = DOM.budgetId;
     const currentBudgetId = localStorage.getItem(CONFIG.ynabBudgetIdPath);
-
-    select.innerHTML = '<option value="">Select a budget...</option>' +
+    const optionsHtml = '<option value="">Select a budget...</option>' +
         budgets.map(b => `<option value="${b.id}" ${b.id === currentBudgetId ? 'selected' : ''}>${b.name}</option>`).join('');
+
+    if (DOM.budgetId) {
+        DOM.budgetId.innerHTML = optionsHtml;
+    }
+    if (DOM.setupBudget) {
+        DOM.setupBudget.innerHTML = optionsHtml;
+    }
 }
 
 function updateAccountDropdown(accounts) {
-    const select = DOM.accountId;
     const currentAccountId = localStorage.getItem(CONFIG.ynabAccountIdPath);
-
-    select.innerHTML = '<option value="">Select an account...</option>' +
+    const optionsHtml = '<option value="">Select an account...</option>' +
         accounts.map(a => `<option value="${a.id}" ${a.id === currentAccountId ? 'selected' : ''}>${a.name} (${a.type})</option>`).join('');
+
+    if (DOM.accountId) {
+        DOM.accountId.innerHTML = optionsHtml;
+    }
+    if (DOM.setupAccount) {
+        DOM.setupAccount.innerHTML = optionsHtml;
+    }
+    if (DOM.settingsAccountId) {
+        DOM.settingsAccountId.innerHTML = optionsHtml;
+    }
 }
 
 export async function fetchYNABCategories(forceRefresh = false) {

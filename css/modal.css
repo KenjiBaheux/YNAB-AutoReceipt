@@ -241,3 +241,28 @@
 .modal.redact-mode .crop-overlay {
     display: none;
 }
+
+/* Settings Modal Content Override */
+.settings-modal-content {
+    max-width: 650px !important;
+    height: 80vh !important;
+    max-height: 700px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    margin: 10vh auto !important;
+    padding: 2.5rem !important;
+    border-radius: 24px !important;
+    background: rgba(11, 14, 20, 0.98) !important;
+    box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8) !important;
+    border: 1px solid var(--glass-border) !important;
+}
+
+.settings-modal-content h2 {
+    margin-top: 0;
+    margin-bottom: 1.5rem;
+    font-family: var(--font-heading);
+    font-size: 1.8rem;
+    color: rgba(255, 255, 255, 0.95);
+    flex-shrink: 0;
+}

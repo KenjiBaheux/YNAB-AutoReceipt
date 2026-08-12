@@ -1,12 +1,118 @@
 import { DOM } from './dom.js';
 import { showToast, updateProgressCounter } from './ui.js';
-import { updateReceiptCard } from './card.js'; // Circular dep, will create card.js next
+import { updateReceiptCard } from './card.js';
 import { getYNABCategories } from './config.js';
+
+export const AI_CONFIG_KEYS = {
+    systemPrompt: 'ynab_receipt_porter_ai_system_prompt',
+    samplingMode: 'ynab_receipt_porter_ai_sampling_mode',
+    temperature: 'ynab_receipt_porter_ai_temperature',
+    topK: 'ynab_receipt_porter_ai_topk',
+    concurrency: 'ynab_receipt_porter_ai_concurrency',
+    userPrompt: 'ynab_receipt_porter_ai_user_prompt',
+    schema: 'ynab_receipt_porter_ai_schema'
+};
+
+export const DEFAULT_SCHEMA = `{
+  "type": "object",
+  "properties": {
+    "merchants": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Up to 5 merchant candidates, most likely first"
+    },
+    "dates": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Up to 5 date candidates (YYYY-MM-DD), most likely first"
+    },
+    "amounts": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      },
+      "description": "Up to 5 amount candidates (whole numbers), most likely first"
+    },
+    "categories": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Up to 5 suggested YNAB categories, most likely first"
+    }
+  },
+  "required": [
+    "merchants",
+    "dates",
+    "amounts",
+    "categories"
+  ]
+}`;
+
+/**
+ * Returns true if the browser supports the new Chrome 151+ samplingMode API.
+ * The old API exposed LanguageModel.params(); the new one removed it.
+ */
+export function supportsSamplingMode() {
+    return typeof LanguageModel !== 'undefined' && typeof LanguageModel.params !== 'function';
+}
+
+export const DEFAULT_SYSTEM_PROMPT = `You are a Japanese receipt parser. Extract Merchant name, Date (YYYY-MM-DD), Total Amount as a whole integer, and Category.
+
+Provide up to 3 candidates for each field, ordered by likelihood (most likely first).
+If a field is very certain, you can provide fewer candidates.
+Omit any explanations.
+
+Hints for extractions:
+- **Total Amount**: Usually preceded by the symbol "¥", and typically presented in a larger or bold font and after the "合計" label (do not confuse with "小計"). Japanese Yen does not use cents/decimals.
+- **Date**: Look for "YYYY/MM/DD", "YYYY-MM-DD", or "YYYY年MM月DD日". It's often at the top and may be followed by a time (HH:mm).
+- **Merchant**: Usually at the very top. It's often followed by an address or phone number. Do not confuse generic terms like "領収書" (Receipt) with the vendor name.
+- **Category**: Suggest possible YNAB categories.
+
+{{CATEGORIES}}`;
+
+export const DEFAULT_USER_PROMPT = "Extract JSON from this receipt:";
 
 let baseSession = null;
 let warmUpSession = null;
 let setupPromise = null;
-let aiQueuePromise = Promise.resolve();
+
+export const aiQueue = {
+    queue: [],
+    activeCount: 0,
+    
+    getMaxConcurrency() {
+        const val = localStorage.getItem(AI_CONFIG_KEYS.concurrency);
+        return val ? Math.max(1, parseInt(val)) : 1;
+    },
+
+    async add(taskFn) {
+        return new Promise((resolve, reject) => {
+            this.queue.push({ taskFn, resolve, reject });
+            this.processNext();
+        });
+    },
+
+    async processNext() {
+        const maxConcurrency = this.getMaxConcurrency();
+        while (this.activeCount < maxConcurrency && this.queue.length > 0) {
+            const { taskFn, resolve, reject } = this.queue.shift();
+            this.activeCount++;
+            
+            taskFn()
+                .then(resolve)
+                .catch(reject)
+                .finally(() => {
+                    this.activeCount--;
+                    this.processNext();
+                });
+        }
+    }
+};
 
 export async function checkAIAvailability() {
     const dot = DOM.aiStatus.querySelector('.dot');
@@ -70,7 +176,11 @@ export async function warmUpAI() {
             ]
         };
 
-        if (typeof LanguageModel.params === 'function') {
+        if (supportsSamplingMode()) {
+            // Chrome 151+: use semantic samplingMode
+            options.samplingMode = 'most-predictable';
+        } else {
+            // Legacy: use raw temperature / topK
             options.temperature = 0.0;
             options.topK = 1;
         }
@@ -130,6 +240,14 @@ export async function setupAI() {
     setupPromise = (async () => {
         const categoryData = getYNABCategories();
         const categories = (categoryData && categoryData.categories) ? categoryData.categories : [];
+        const categoryInstruction = categories.length > 0
+            ? `Use one of the following categories if applicable: ${categories.map(c => c.name).join(', ')}. IF NONE FIT, leave it empty.`
+            : `Suggest generic categories like "Dining Out", "Groceries", "Transportation", "Entertainment", "Shopping".`;
+
+        let systemPrompt = localStorage.getItem(AI_CONFIG_KEYS.systemPrompt) || DEFAULT_SYSTEM_PROMPT;
+        if (systemPrompt.includes('{{CATEGORIES}}')) {
+            systemPrompt = systemPrompt.replace('{{CATEGORIES}}', categoryInstruction);
+        }
 
         performance.mark('start-ai-setup');
 
@@ -141,32 +259,30 @@ export async function setupAI() {
                 ],
                 initialPrompts: [
                     {
-                        role: 'system', content: `You are a Japanese receipt parser. Extract Merchant name, Date (YYYY-MM-DD), Total Amount as a whole integer, and Category.
-                        
-                        Provide up to 3 candidates for each field, ordered by likelihood (most likely first).
-                        If a field is very certain, you can provide fewer candidates.
-                        Omit any explanations.
-
-                        Hints for extractions:
-                        - **Total Amount**: Usually preceded by the symbol "¥", and typically presented in a larger or bold font and after the "合計" label (do not confuse with "小計"). Japanese Yen does not use cents/decimals.
-                        - **Date**: Look for "YYYY/MM/DD", "YYYY-MM-DD", or "YYYY年MM月DD日". It's often at the top and may be followed by a time (HH:mm).
-                        - **Merchant**: Usually at the very top. It's often followed by an address or phone number. Do not confuse generic terms like "領収書" (Receipt) with the vendor name.
-                        - **Category**: Suggest possible YNAB categories.
-                        
-                        ${categories.length > 0
-                                ? `Use one of the following categories if applicable: ${categories.map(c => c.name).join(', ')}. IF NONE FIT, leave it empty.`
-                                : `Suggest generic categories like "Dining Out", "Groceries", "Transportation", "Entertainment", "Shopping".`}
-                        ` }
+                        role: 'system', content: systemPrompt
+                    }
                 ],
                 expectedOutputs: [
                     { type: "text", languages: ["ja"] }
                 ]
             };
 
-            if (typeof LanguageModel.params === 'function') {
-                const params = await LanguageModel.params();
-                options.temperature = 0.0;
-                options.topK = params.defaultTopK;
+            if (supportsSamplingMode()) {
+                // Chrome 151+: use semantic samplingMode enum
+                const savedMode = localStorage.getItem(AI_CONFIG_KEYS.samplingMode);
+                options.samplingMode = savedMode || 'most-predictable';
+            } else {
+                // Legacy Chrome (<151): use raw temperature / topK
+                const tempStr = localStorage.getItem(AI_CONFIG_KEYS.temperature);
+                options.temperature = tempStr !== null ? parseFloat(tempStr) : 0.0;
+
+                const topKStr = localStorage.getItem(AI_CONFIG_KEYS.topK);
+                if (topKStr !== null && topKStr !== '') {
+                    options.topK = parseInt(topKStr);
+                } else if (typeof LanguageModel.params === 'function') {
+                    const params = await LanguageModel.params();
+                    options.topK = params.defaultTopK;
+                }
             }
 
             baseSession = await LanguageModel.create(options);
@@ -205,67 +321,86 @@ async function getAISession() {
 }
 
 export async function runAIExtraction(imageInput, card, fileName) {
-    const currentPromise = aiQueuePromise;
-    let resolveQueue;
-    aiQueuePromise = new Promise(resolve => {
-        resolveQueue = resolve;
-    });
-
-    try {
-        await currentPromise;
-    } catch (err) {
-        console.warn('Previous AI extraction failed, starting next:', err);
-    }
-
-    let session = null;
-    try {
-        session = await getAISession();
-        const images = Array.isArray(imageInput) ? imageInput : [imageInput];
-
-        if (images.length > 1) {
-            console.log(`Processing tall receipt in ${images.length} chunks for ${fileName}`);
+    return aiQueue.add(async () => {
+        // Skip if card has been dismissed or pushed already
+        if (!document.body.contains(card)) {
+            return;
         }
 
-        const schema = {
-            type: "object",
-            properties: {
-                merchants: { type: "array", items: { type: "string" }, description: "Up to 5 merchant candidates, most likely first" },
-                dates: { type: "array", items: { type: "string" }, description: "Up to 5 date candidates (YYYY-MM-DD), most likely first" },
-                amounts: { type: "array", items: { type: "integer" }, description: "Up to 5 amount candidates (whole numbers), most likely first" },
-                categories: { type: "array", items: { type: "string" }, description: "Up to 5 suggested YNAB categories, most likely first" }
-            },
-            required: ["merchants", "dates", "amounts", "categories"]
-        };
+        // Set card status to active processing
+        card.classList.remove('queued');
+        card.classList.add('processing');
+        updateProgressCounter();
 
-        performance.mark(`start-ai-extraction-${fileName}`);
-        const promptContent = [
-            { role: 'user', content: [{ type: 'text', value: "Extract JSON from this receipt:" }] }
-        ];
+        let session = null;
+        try {
+            session = await getAISession();
+            const images = Array.isArray(imageInput) ? imageInput : [imageInput];
 
-        // Add images to the prompt
-        images.forEach(blob => {
-            promptContent[0].content.push({ type: 'image', value: blob });
-        });
+            if (images.length > 1) {
+                console.log(`Processing tall receipt in ${images.length} chunks for ${fileName}`);
+            }
 
-        const resultText = await session.prompt(promptContent, { responseConstraint: schema });
-
-        performance.mark(`end-ai-extraction-${fileName}`);
-        const measure = performance.measure('AI Extraction duration', `start-ai-extraction-${fileName}`, `end-ai-extraction-${fileName}`);
-        console.log('AI Extraction successful; duration:', measure.duration);
-
-        const data = JSON.parse(resultText);
-        updateReceiptCard(card, data);
-    } catch (err) {
-        console.error('AI Processing error:', err);
-        showToast(`AI failed for ${fileName}`, 'error');
-    } finally {
-        if (session) {
+            let schema;
             try {
-                session.destroy();
-            } catch (destroyErr) {
-                console.warn('Failed to destroy session:', destroyErr);
+                const schemaText = localStorage.getItem(AI_CONFIG_KEYS.schema) || DEFAULT_SCHEMA;
+                schema = JSON.parse(schemaText);
+            } catch (err) {
+                console.warn('Failed to parse AI schema from settings, using default:', err);
+                schema = JSON.parse(DEFAULT_SCHEMA);
+            }
+
+            performance.mark(`start-ai-extraction-${fileName}`);
+
+            // Retrieve user hints from active inputs (in case user filled them manually while in queue)
+            const merchantHint = card.querySelector('.merchant-input').value.trim();
+            const dateHint = card.querySelector('.date-input').value.trim();
+            const amountHint = card.querySelector('.amount-input').value.trim();
+            const categoryHint = card.querySelector('.category-input').value.trim();
+
+            let hints = [];
+            if (merchantHint) hints.push(`Merchant is likely: "${merchantHint}"`);
+            if (dateHint) hints.push(`Transaction date is likely: "${dateHint}"`);
+            if (amountHint) hints.push(`Transaction amount is likely: ${amountHint}`);
+            if (categoryHint) hints.push(`Category is likely: "${categoryHint}"`);
+
+            const userPromptTemplate = localStorage.getItem(AI_CONFIG_KEYS.userPrompt) || DEFAULT_USER_PROMPT;
+            let userPrompt = userPromptTemplate;
+            if (hints.length > 0) {
+                userPrompt += "\n\nUser hints:\n" + hints.map(h => `- ${h}`).join('\n') + "\nPlease prioritize these hints if they match the receipt contents.";
+            }
+
+            const promptContent = [
+                { role: 'user', content: [{ type: 'text', value: userPrompt }] }
+            ];
+
+            // Add images to the prompt
+            images.forEach(blob => {
+                promptContent[0].content.push({ type: 'image', value: blob });
+            });
+
+            const resultText = await session.prompt(promptContent, { responseConstraint: schema });
+
+            performance.mark(`end-ai-extraction-${fileName}`);
+            const measure = performance.measure('AI Extraction duration', `start-ai-extraction-${fileName}`, `end-ai-extraction-${fileName}`);
+            console.log('AI Extraction successful; duration:', measure.duration);
+
+            const data = JSON.parse(resultText);
+            updateReceiptCard(card, data);
+        } catch (err) {
+            console.error('AI Processing error:', err);
+            showToast(`AI failed for ${fileName}`, 'error');
+            // Revert state so card remains editable/pushable on failure
+            card.classList.remove('processing');
+            updateProgressCounter();
+        } finally {
+            if (session) {
+                try {
+                    session.destroy();
+                } catch (destroyErr) {
+                    console.warn('Failed to destroy session:', destroyErr);
+                }
             }
         }
-        resolveQueue();
-    }
+    });
 }

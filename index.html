@@ -11,7 +11,75 @@
         href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Inter:wght@300;400;500;600&display=swap"
         rel="stylesheet">
     <link rel="stylesheet" href="css/main.css">
-    <!-- Inline prompt-api-proxy.js reference removed as we assume proper browser support or newer API usage -->
+    
+    <!-- YNAB API Mock Layer for Demo/Test Mode -->
+    <script>
+        if (window.location.search.includes('demo=true')) {
+            console.log('YNAB Receipt Porter: API Mock Layer Enabled');
+            const originalFetch = window.fetch;
+            window.fetch = async function(url, options) {
+                const urlStr = String(url);
+                if (urlStr.includes('api.ynab.com/v1/budgets') && !urlStr.includes('accounts') && !urlStr.includes('categories') && !urlStr.includes('payees') && !urlStr.includes('transactions')) {
+                    console.log('Mocking budgets fetch');
+                    return new Response(JSON.stringify({
+                        data: {
+                            budgets: [
+                                { id: 'budget-1', name: 'Personal Budget' },
+                                { id: 'budget-2', name: 'Business Budget' }
+                            ]
+                        }
+                    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                }
+                if (urlStr.includes('accounts')) {
+                    console.log('Mocking accounts fetch');
+                    return new Response(JSON.stringify({
+                        data: {
+                            accounts: [
+                                { id: 'acc-1', name: 'Cash Account', type: 'cash', on_budget: true, closed: false },
+                                { id: 'acc-2', name: 'Credit Card', type: 'creditCard', on_budget: true, closed: false }
+                            ]
+                        }
+                    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                }
+                if (urlStr.includes('categories')) {
+                    console.log('Mocking categories fetch');
+                    return new Response(JSON.stringify({
+                        data: {
+                            category_groups: [
+                                {
+                                    name: 'Everyday Expenses',
+                                    categories: [
+                                        { id: 'cat-1', name: 'Groceries', hidden: false, deleted: false },
+                                        { id: 'cat-2', name: 'Dining Out', hidden: false, deleted: false }
+                                    ]
+                                }
+                            ]
+                        }
+                    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                }
+                if (urlStr.includes('payees')) {
+                    console.log('Mocking payees fetch');
+                    return new Response(JSON.stringify({
+                        data: {
+                            payees: [
+                                { id: 'payee-1', name: 'FamilyMart', deleted: false },
+                                { id: 'payee-2', name: 'Lawson', deleted: false }
+                            ]
+                        }
+                    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                }
+                if (urlStr.includes('transactions')) {
+                    console.log('Mocking transactions fetch');
+                    return new Response(JSON.stringify({
+                        data: {
+                            transactions: []
+                        }
+                    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                }
+                return originalFetch.apply(this, arguments);
+            };
+        }
+    </script>
 </head>
 
 <body>
@@ -21,56 +89,85 @@
         <div class="blob blob-3"></div>
     </div>
 
-    <main class="app-container">
-        <header>
-            <div class="logo">
+    <!-- First-run Setup Wizard -->
+    <div id="setup-wizard" class="wizard-overlay" style="display: none;">
+        <div class="wizard-card glass">
+            <div class="wizard-header">
                 <span class="logo-icon">🧾</span>
-                <h1>YNAB Receipt Porter</h1>
+                <h2>Welcome to YNAB Receipt Porter</h2>
+            </div>
+            
+            <!-- Step 1: PAT -->
+            <div class="wizard-step" id="wizard-step-1">
+                <h3>1. Connect to YNAB</h3>
+                <p class="wizard-text">This application runs entirely in your browser. All receipt images, tokens, and data stay on your computer. We pinky swear 🤙.</p>
+                <div class="input-group">
+                    <label for="setup-ynab-pat">YNAB Personal Access Token</label>
+                    <input type="password" id="setup-ynab-pat" placeholder="Enter PAT...">
+                    <small class="help-text">To get one, go to your YNAB account Settings > Developer Settings > Personal Access Tokens, or <a href="https://api.ynab.com/#quick-start" target="_blank" class="accent-link">click here to read YNAB's guide</a>.</small>
+                </div>
+                <div class="wizard-actions">
+                    <button id="btn-wizard-next-1" class="btn primary">Connect YNAB <span class="icon">➡️</span></button>
+                </div>
+            </div>
+
+            <!-- Step 2: Budget -->
+            <div class="wizard-step" id="wizard-step-2" style="display: none;">
+                <h3>2. Select Default Budget</h3>
+                <p class="wizard-text">Choose the YNAB budget you want to import receipts into by default.</p>
+                <div class="input-group">
+                    <label for="setup-ynab-budget">Budget</label>
+                    <select id="setup-ynab-budget">
+                        <option value="">Fetching budgets...</option>
+                    </select>
+                </div>
+                <div class="wizard-actions">
+                    <button id="btn-wizard-back-2" class="btn secondary"><span class="icon">⬅️</span> Back</button>
+                    <button id="btn-wizard-next-2" class="btn primary">Next <span class="icon">➡️</span></button>
+                </div>
+            </div>
+
+            <!-- Step 3: Account -->
+            <div class="wizard-step" id="wizard-step-3" style="display: none;">
+                <h3>3. Select Default Account</h3>
+                <p class="wizard-text">Choose your default account. You can easily switch this later on the main view.</p>
+                <div class="input-group">
+                    <label for="setup-ynab-account">Default Account</label>
+                    <select id="setup-ynab-account">
+                        <option value="">Fetching accounts...</option>
+                    </select>
+                </div>
+                <div class="wizard-actions">
+                    <button id="btn-wizard-back-3" class="btn secondary"><span class="icon">⬅️</span> Back</button>
+                    <button id="btn-wizard-finish" class="btn primary">Finish Setup <span class="icon">✨</span></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <main class="app-container" id="app-main-content">
+        <header>
+            <div class="header-top">
+                <div class="logo">
+                    <span class="logo-icon">🧾</span>
+                    <h1>YNAB Receipt Porter</h1>
+                </div>
+                <button id="btn-open-settings" class="btn secondary btn-icon" title="Settings">
+                    <span class="icon">⚙️</span> Settings
+                </button>
             </div>
             <p class="subtitle">Extract receipts with Built-in AI and sync to YNAB effortlessly.</p>
         </header>
 
-        <section class="controls glass">
-            <div class="settings-header" style="display: flex; align-items: center; gap: 10px; margin-bottom: 1rem;">
-                <h3 style="margin: 0; font-size: 1.1rem; color: rgba(255,255,255,0.9);">YNAB Settings</h3>
-                <a href="https://api.ynab.com/#quick-start" target="_blank" title="How to get these values"
-                    style="text-decoration: none; opacity: 0.7; transition: opacity 0.2s;">
-                    <span class="icon" style="font-size: 1rem;">❓</span>
-                </a>
+        <!-- Compact Account Selector & Status Bar -->
+        <section class="account-selector-bar glass">
+            <div class="selector-group">
+                <label for="ynab-account-id">Active Account</label>
+                <select id="ynab-account-id">
+                    <option value="">Select an account...</option>
+                </select>
             </div>
-            <div class="api-settings">
-                <div class="input-group">
-                    <label for="ynab-api-pat">YNAB Personal Access Token</label>
-                    <input type="password" id="ynab-api-pat" placeholder="Enter PAT...">
-                </div>
-                <div class="input-group">
-                    <label for="ynab-budget-id">Budget</label>
-                    <select id="ynab-budget-id">
-                        <option value="">Enter your PAT first...</option>
-                    </select>
-                </div>
-                <div class="input-group">
-                    <label for="ynab-account-id">Account</label>
-                    <select id="ynab-account-id">
-                        <option value="">Select a budget...</option>
-                    </select>
-                </div>
-                <div class="input-group"
-                    style="align-self: flex-end; flex-direction: row; gap: 10px; align-items: center;">
-                    <button id="btn-refresh-categories" class="btn btn-small" title="Refresh Categories">
-                        <span class="icon">🔄</span>
-                    </button>
-                    <small id="category-count" style="color: rgba(255,255,255,0.7); white-space: nowrap;">0 cats</small>
-                </div>
-            </div>
-            </div>
-        </section>
-
-        <section class="ai-status glass">
-            <div class="settings-header" style="display: flex; align-items: center; gap: 10px; margin-bottom: 1rem;">
-                <h3 style="margin: 0; font-size: 1.1rem; color: rgba(255,255,255,0.9);">AI Engine</h3>
-            </div>
-            <div class="status-container" style="display: flex; gap: 20px; align-items: center;">
+            <div class="status-group">
                 <div id="ai-status" class="status-indicator">
                     <span class="dot"></span>
                     <span class="status-text">Checking AI status...</span>
@@ -81,6 +178,7 @@
             </div>
         </section>
 
+        <!-- Receipts Explorer -->
         <section class="receipts-explorer glass">
             <div class="explorer-header">
                 <h2>Pending Transactions</h2>
@@ -111,8 +209,10 @@
             <div id="receipt-list" class="receipt-grid" style="display: none;">
                 <!-- Receipt items will be injected here -->
             </div>
+        </section>
     </main>
 
+    <!-- Crop & Redact Modal -->
     <div id="full-view-modal" class="modal">
         <div class="modal-content glass">
             <span id="btn-dismiss-modal" class="close-modal">&times;</span>
@@ -147,9 +247,206 @@
         </div>
     </div>
 
+    <!-- Main Settings Modal -->
+    <div id="settings-modal" class="modal">
+        <div class="modal-content glass settings-modal-content">
+            <span id="btn-close-settings" class="close-modal">&times;</span>
+            <h2>Settings</h2>
+            
+            <div class="settings-tabs">
+                <button class="tab-btn active" data-tab="tab-ynab">YNAB Connection</button>
+                <button class="tab-btn" data-tab="tab-ai">AI Engine</button>
+                <button class="tab-btn" data-tab="tab-heuristics">Heuristics & Rules</button>
+            </div>
+            
+            <!-- Tab 1: YNAB -->
+            <div class="tab-content active" id="tab-ynab">
+                <div class="input-group">
+                    <label for="ynab-api-pat">YNAB Personal Access Token</label>
+                    <input type="password" id="ynab-api-pat" placeholder="Enter PAT...">
+                </div>
+                <div class="input-group">
+                    <label for="ynab-budget-id">Active Budget</label>
+                    <select id="ynab-budget-id">
+                        <option value="">Enter PAT first...</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label for="settings-ynab-account-id">Default Account</label>
+                    <select id="settings-ynab-account-id">
+                        <option value="">Select a budget...</option>
+                    </select>
+                </div>
+                <div style="margin-top: 1.5rem; display: flex; gap: 10px;">
+                    <button id="btn-reset-setup" class="btn secondary">
+                        <span>🔄</span> Rerun Setup Wizard
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Tab 2: AI Settings -->
+            <div class="tab-content" id="tab-ai">
+                <div class="input-group">
+                    <label for="ai-system-prompt">System Prompt</label>
+                    <textarea id="ai-system-prompt" rows="5"></textarea>
+                    <small class="help-text">
+                        Tip: Use <code>{{CATEGORIES}}</code> to dynamically insert the list of YNAB categories.
+                    </small>
+                </div>
+                
+                <div class="input-group">
+                    <label for="ai-response-schema">Response Schema (JSON)</label>
+                    <textarea id="ai-response-schema" rows="6" style="font-family: monospace; font-size: 0.85rem;"></textarea>
+                </div>
+
+                <div class="api-settings" style="margin-bottom: 0;">
+                    <!-- Chrome 151+: samplingMode -->
+                    <div id="ai-sampling-mode-group" class="input-group" style="display: none;">
+                        <label for="ai-sampling-mode">Sampling Mode</label>
+                        <select id="ai-sampling-mode">
+                            <option value="most-predictable">Most Predictable — strictest consistency</option>
+                            <option value="predictable">Predictable — highly focused outputs</option>
+                            <option value="balanced">Balanced — standard prompting default</option>
+                            <option value="creative">Creative — favors variety</option>
+                            <option value="most-creative">Most Creative — maximum diversity</option>
+                        </select>
+                    </div>
+
+                    <!-- Legacy Chrome (<151): raw temperature + topK -->
+                    <div id="ai-legacy-params-group" style="display: none; grid-column: 1 / -1; flex-direction: column; gap: 1rem;">
+                        <div class="input-group">
+                            <label for="ai-temperature" style="display: flex; justify-content: space-between;">
+                                <span>Temperature</span>
+                                <span id="val-temperature">0.0</span>
+                            </label>
+                            <input type="range" id="ai-temperature" min="0.0" max="1.0" step="0.1" value="0.0">
+                        </div>
+                        <div class="input-group">
+                            <label for="ai-topk">Top K</label>
+                            <input type="number" id="ai-topk" min="1" max="100" placeholder="Model Default">
+                        </div>
+                    </div>
+
+                    <div class="input-group">
+                        <label for="ai-concurrency">Max Concurrency</label>
+                        <input type="number" id="ai-concurrency" min="1" max="10" value="1">
+                    </div>
+                </div>
+
+                <div class="input-group">
+                    <label for="ai-user-prompt">User Prompt Template</label>
+                    <input type="text" id="ai-user-prompt" value="Extract JSON from this receipt:">
+                </div>
+
+                <div style="display: flex; align-items: center; gap: 1rem; width: 100%; margin-top: 1rem;">
+                    <button id="btn-reset-ai-settings" class="btn secondary btn-small" style="width: auto;">
+                        Reset to Defaults
+                    </button>
+                    <span id="settings-save-indicator" style="color: var(--success); font-size: 0.85rem; opacity: 0; transition: opacity 0.3s;">
+                        ✓ Saved & AI Reset
+                    </span>
+                </div>
+            </div>
+            
+            <!-- Tab 3: Heuristics & Rules -->
+            <div class="tab-content" id="tab-heuristics">
+                <p class="tab-intro">Control how the app extracts auxiliary information from filenames and YNAB history to build recommendation chips.</p>
+
+                <div class="heuristics-options">
+                    <!-- Filename Heuristic -->
+                    <div class="heuristic-card glass">
+                       <div class="heuristic-header">
+                           <div class="heuristic-title">
+                               <span class="legend-dot filename"></span>
+                               <h4>Filename Metadata Extraction</h4>
+                           </div>
+                           <label class="switch">
+                               <input type="checkbox" id="heuristic-filename-enabled" checked>
+                               <span class="slider"></span>
+                           </label>
+                       </div>
+                       <div class="heuristic-body" id="heuristic-filename-details">
+                           <p>Extract Date, Payee, and Amount directly from the receipt filename using a Regular Expression.</p>
+                           <div class="input-group">
+                               <label for="heuristic-filename-pattern">Filename Regex Pattern</label>
+                               <input type="text" id="heuristic-filename-pattern" value="^(\d{4}_\d{2}_\d{2})_+(.*)$">
+                               <small class="help-text">Default parses `YYYY_MM_DD_Payee_Amount.ext`. Requires the first capture group to be the date (YYYY_MM_DD or similar).</small>
+                           </div>
+                           
+                           <!-- Interactive Previewer -->
+                           <div class="regex-previewer">
+                               <h5>Live Regex Match Test</h5>
+                               <div class="input-group">
+                                   <input type="text" id="regex-test-input" placeholder="Type a sample filename (e.g. 2026_08_10_FamilyMart_1080.jpg)">
+                               </div>
+                               <div class="regex-test-results">
+                                   <div class="result-row">Parsed Date: <span id="regex-result-date" class="result-val">-</span></div>
+                                   <div class="result-row">Parsed Payee: <span id="regex-result-payee" class="result-val">-</span></div>
+                                   <div class="result-row">Parsed Amount: <span id="regex-result-amount" class="result-val">-</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Nearest Payee Match -->
+                    <div class="heuristic-card glass">
+                       <div class="heuristic-header">
+                           <div class="heuristic-title">
+                               <span class="legend-dot database"></span>
+                               <h4>YNAB Nearest Payee Matching</h4>
+                           </div>
+                           <label class="switch">
+                               <input type="checkbox" id="heuristic-payee-matching-enabled" checked>
+                               <span class="slider"></span>
+                           </label>
+                       </div>
+                       <div class="heuristic-body">
+                           <p>Use Levenshtein distance algorithms to automatically map AI-extracted merchants to your closest existing YNAB payee names (tolerating spelling differences or abbreviations).</p>
+                       </div>
+                    </div>
+
+                    <!-- Typical Category Mapping -->
+                    <div class="heuristic-card glass">
+                       <div class="heuristic-header">
+                           <div class="heuristic-title">
+                               <span class="legend-dot database"></span>
+                               <h4>YNAB Typical Category Mapping</h4>
+                           </div>
+                           <label class="switch">
+                               <input type="checkbox" id="heuristic-typical-category-enabled" checked>
+                               <span class="slider"></span>
+                           </label>
+                       </div>
+                       <div class="heuristic-body">
+                           <p>Analyze transaction history on your budget and suggest the most frequent category associated with the matched payee.</p>
+                       </div>
+                    </div>
+                </div>
+
+                <!-- Color Code Legend -->
+                <div class="chip-legend glass">
+                    <h4>Chip Color Coding Legend</h4>
+                    <div class="legend-items">
+                        <div class="legend-item">
+                            <span class="chip-example active">Cyan</span>
+                            <span>AI Candidates (Direct extraction suggestions from the model)</span>
+                        </div>
+                        <div class="legend-item">
+                            <span class="chip-example filename">Orange</span>
+                            <span>Filename Heuristics (Parsed from filename pattern)</span>
+                        </div>
+                        <div class="legend-item">
+                            <span class="chip-example heuristic">Purple</span>
+                            <span>YNAB Database Heuristics (Nearest payee match or typical category)</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="toast-container" class="toast-container"></div>
     <datalist id="ynab-category-list"></datalist>
-    <datalist id="ynab-merchant-list"></datalist>
     <script type="module" src="js/app.js"></script>
 </body>
 

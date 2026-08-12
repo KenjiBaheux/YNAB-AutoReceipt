@@ -2,7 +2,7 @@ import { DOM } from './dom.js';
 import { pushToYNAB } from './ynab.js';
 import { findClosestPayee } from './ynab.js';
 import { renderChips, updateProgressCounter } from './ui.js';
-import { markAsProcessed, getYNABPayees, getYNABPayeeCategories } from './config.js';
+import { markAsProcessed, getYNABPayees, getYNABPayeeCategories, isHeuristicFilenameEnabled, getHeuristicFilenamePattern, isHeuristicPayeeMatchingEnabled, isHeuristicTypicalCategoryEnabled } from './config.js';
 import { setActiveRedactionCard, setupCroppingUI, renderRedactions, updateModalToolbar, setupRedactionCanvas, clearRedactionCanvas } from './modal.js';
 
 let cardCounter = 0;
@@ -10,7 +10,7 @@ let cardCounter = 0;
 export function createReceiptCard(fileName, optimizedBlob, displayUrl, originalFile, autoBounds) {
     cardCounter++;
     const card = document.createElement('div');
-    card.className = 'receipt-card processing';
+    card.className = 'receipt-card queued';
     card.id = `receipt-${cardCounter}`;
     card.dataset.merchant = fileName; // Initial fallback
     card.dataset.bounds = JSON.stringify(autoBounds);
@@ -28,7 +28,7 @@ export function createReceiptCard(fileName, optimizedBlob, displayUrl, originalF
         <div class="receipt-info">
             <div class="field-group">
                 <label>Merchant</label>
-                <input type="text" class="edit-input merchant-input" placeholder="Analyzing..." list="ynab-merchant-list">
+                <input type="text" class="edit-input merchant-input" placeholder="Merchant name..." list="ynab-merchant-list">
                 <div class="suggestion-chips merchants-chips"></div>
             </div>
             <div class="field-group">
@@ -117,6 +117,28 @@ export function createReceiptCard(fileName, optimizedBlob, displayUrl, originalF
         DOM.processedCount.textContent = Math.max(0, currentCount - 1);
     });
 
+    const merchantInput = card.querySelector('.merchant-input');
+    const dateInput = card.querySelector('.date-input');
+    const amountInput = card.querySelector('.amount-input');
+    const pushBtn = card.querySelector('.btn-push');
+
+    const updatePushEnabled = () => {
+        if (card.classList.contains('processing')) {
+            pushBtn.disabled = true;
+            return;
+        }
+        const hasMerchant = merchantInput.value.trim() !== '';
+        const hasDate = dateInput.value.trim() !== '';
+        const hasAmount = amountInput.value.trim() !== '' && parseInt(amountInput.value) > 0;
+        
+        pushBtn.disabled = !(hasMerchant && hasDate && hasAmount);
+    };
+
+    [merchantInput, dateInput, amountInput].forEach(inp => {
+        inp.addEventListener('input', updatePushEnabled);
+        inp.addEventListener('change', updatePushEnabled);
+    });
+
     return card;
 }
 
@@ -142,7 +164,7 @@ export function updateReceiptCard(card, data) {
     const categories = dedupe(data.categories);
 
     const fileName = card.dataset.merchant || '';
-    const fileInfo = extractInfoFromFilename(fileName);
+    const fileInfo = isHeuristicFilenameEnabled() ? extractInfoFromFilename(fileName) : null;
 
     // Set primary values (most likely)
     card.querySelector('.merchant-input').value = merchants[0] || '';
@@ -160,7 +182,7 @@ export function updateReceiptCard(card, data) {
     }
 
     const cachedPayees = getYNABPayees();
-    if (merchants[0] && cachedPayees && cachedPayees.payees) {
+    if (isHeuristicPayeeMatchingEnabled() && merchants[0] && cachedPayees && cachedPayees.payees) {
         const closest = findClosestPayee(merchants[0], cachedPayees.payees);
         if (closest && !merchants.includes(closest) && !(fileInfo && fileInfo.payee === closest)) {
             // Add as a heuristic chip
@@ -173,7 +195,7 @@ export function updateReceiptCard(card, data) {
     const cachedPayeeCats = getYNABPayeeCategories();
     const targetPayee = (merchantChips.find(m => m.isHeuristic) || merchantChips[0])?.value;
 
-    if (targetPayee && cachedPayeeCats && cachedPayeeCats.map) {
+    if (isHeuristicTypicalCategoryEnabled() && targetPayee && cachedPayeeCats && cachedPayeeCats.map) {
         const typicalCategory = cachedPayeeCats.map[targetPayee];
         if (typicalCategory && !categories.includes(typicalCategory)) {
             categoryChips.push({ value: typicalCategory, isHeuristic: true });
@@ -258,11 +280,20 @@ function normalizeDate(dateStr) {
 function extractInfoFromFilename(fileName) {
     if (!fileName) return null;
     const name = fileName.replace(/\.[^/.]+$/, ""); // remove extension
-    const dateMatch = name.match(/^(\d{4}_\d{2}_\d{2})_+(.*)$/);
+    
+    const pattern = getHeuristicFilenamePattern();
+    let dateMatch;
+    try {
+        dateMatch = name.match(new RegExp(pattern));
+    } catch (err) {
+        console.error('Invalid filename heuristic regex pattern:', err);
+        return null;
+    }
+    
     if (!dateMatch) return null;
 
     const dateStr = dateMatch[1].replace(/_/g, '-'); // YYYY-MM-DD
-    let rest = dateMatch[2];
+    let rest = dateMatch[2] || '';
 
     const amountMatch = rest.match(/_+([0-9()][0-9(),_]*|[^_]+)$/);
     let payee = rest;
