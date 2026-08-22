@@ -1,24 +1,52 @@
 import { DOM } from './dom.js';
 
-// State tracks the currently active card being edited in the modal
+// --- State ---
 let activeRedactionCard = null;
 let isBoxDragging = false;
 let startX, startY;
-let currentCropBox = null;
+let currentCropBox = null; // Standardised internally as { x, y, w, h }
 let currentRedactions = [];
 let interactionType = null; // 'crop-move', 'crop-resize', 'redaction-move', 'redaction-resize', 'draw-redaction'
 let activeHandle = null;
 let selectedRedactionIndex = -1;
 
+// --- Helper Functions for Coordinate Conversion & Styling ---
+
+function boxToRect(bounds) {
+    if (!bounds) return null;
+    return {
+        x: bounds.left,
+        y: bounds.top,
+        w: bounds.right - bounds.left,
+        h: bounds.bottom - bounds.top
+    };
+}
+
+function rectToBox(rect) {
+    if (!rect) return null;
+    return {
+        left: rect.x,
+        top: rect.y,
+        right: rect.x + rect.w,
+        bottom: rect.y + rect.h
+    };
+}
+
+function updateRectStyles(element, rect, scaleX, scaleY) {
+    element.style.left = `${rect.x * scaleX}px`;
+    element.style.top = `${rect.y * scaleY}px`;
+    element.style.width = `${rect.w * scaleX}px`;
+    element.style.height = `${rect.h * scaleY}px`;
+}
+
 // --- Modal & Interaction Setup ---
 
 export function setupCroppingUI(img, bounds) {
     const container = document.getElementById('crop-overlay');
-    container.innerHTML = ''; // Clear previous
+    container.innerHTML = '';
+    if (!bounds) return;
 
-    if (!bounds) return; // No optimize bounds?
-
-    currentCropBox = { ...bounds };
+    currentCropBox = boxToRect(bounds);
 
     const rect = img.getBoundingClientRect();
     const scaleX = rect.width / img.naturalWidth;
@@ -26,9 +54,8 @@ export function setupCroppingUI(img, bounds) {
 
     const box = document.createElement('div');
     box.className = 'crop-box';
-    updateBoxStyles(box, currentCropBox, scaleX, scaleY);
+    updateRectStyles(box, currentCropBox, scaleX, scaleY);
 
-    // Add handles
     const handles = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
     handles.forEach(h => {
         const handle = document.createElement('div');
@@ -37,23 +64,13 @@ export function setupCroppingUI(img, bounds) {
         box.appendChild(handle);
     });
 
-    // Event Listeners for Interaction
     box.addEventListener('mousedown', (e) => startBoxInteraction(e, 'crop'));
     container.appendChild(box);
 }
 
-function updateBoxStyles(box, bounds, scaleX, scaleY) {
-    box.style.left = `${bounds.left * scaleX}px`;
-    box.style.top = `${bounds.top * scaleY}px`;
-    box.style.width = `${(bounds.right - bounds.left) * scaleX}px`;
-    box.style.height = `${(bounds.bottom - bounds.top) * scaleY}px`;
-}
-
-// --- Interaction Logic ---
-
 export function startBoxInteraction(e, type, index = -1) {
     e.preventDefault();
-    e.stopPropagation(); // Stop propagation to prevent image click handlers
+    e.stopPropagation();
     isBoxDragging = true;
     startX = e.clientX;
     startY = e.clientY;
@@ -61,14 +78,7 @@ export function startBoxInteraction(e, type, index = -1) {
 
     if (type === 'draw-redaction') {
         interactionType = 'draw-redaction';
-        // Start point relative to image
-        const img = DOM.modalImg;
-        const rect = img.getBoundingClientRect();
-        // Store relative start coordinates for calculation
-        // We use clientX/Y for drag delta, but for drawing we need start point
-        startX = e.clientX;
-        startY = e.clientY;
-        return; // Skip handle checks
+        return;
     }
 
     if (e.target.classList.contains('crop-handle')) {
@@ -79,7 +89,8 @@ export function startBoxInteraction(e, type, index = -1) {
     }
 }
 
-// Global listeners for drag operations
+// --- Global Mouse Move & Up Handlers ---
+
 window.addEventListener('mousemove', (e) => {
     if (!isBoxDragging) return;
     e.preventDefault();
@@ -95,48 +106,37 @@ window.addEventListener('mousemove', (e) => {
     if (interactionType.startsWith('crop')) {
         updateRect(currentCropBox, deltaX, deltaY, img.naturalWidth, img.naturalHeight);
 
-        // Update DOM
         const box = document.querySelector('.crop-box');
-        if (box) updateBoxStyles(box, currentCropBox, 1 / scaleX, 1 / scaleY);
+        if (box) updateRectStyles(box, currentCropBox, 1 / scaleX, 1 / scaleY);
 
-        // Update card data live (optional, or on save)
         const card = getActiveRedactionCard().card;
-        card.dataset.bounds = JSON.stringify(currentCropBox);
+        card.dataset.bounds = JSON.stringify(rectToBox(currentCropBox));
     }
     else if (interactionType.startsWith('redaction') && selectedRedactionIndex !== -1) {
         const redaction = currentRedactions[selectedRedactionIndex];
         updateRect(redaction, deltaX, deltaY, img.naturalWidth, img.naturalHeight);
 
-        // Update DOM
-        // Re-render all to keep sync simplistic or optimize specific element
         renderRedactions(currentRedactions);
 
-        // Update card data
         const activeData = getActiveRedactionCard();
-        activeData.redactions = currentRedactions;
         activeData.redactions = currentRedactions;
         activeData.card.dataset.redactions = JSON.stringify(currentRedactions);
     }
     else if (interactionType === 'draw-redaction') {
-        // Visualize drawing on canvas
         const canvas = document.getElementById('redaction-canvas');
         const ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        const rect = img.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
         const startRelX = startX - rect.left;
         const startRelY = startY - rect.top;
 
-        const w = mouseX - startRelX;
-        const h = mouseY - startRelY;
-
         ctx.fillStyle = 'rgba(255, 77, 77, 0.5)';
-        ctx.fillRect(startRelX, startRelY, w, h);
+        ctx.fillRect(startRelX, startRelY, mouseX - startRelX, mouseY - startRelY);
         ctx.strokeStyle = '#ff4d4d';
         ctx.lineWidth = 2;
-        ctx.strokeRect(startRelX, startRelY, w, h);
+        ctx.strokeRect(startRelX, startRelY, mouseX - startRelX, mouseY - startRelY);
     }
 
     if (interactionType !== 'draw-redaction') {
@@ -147,7 +147,6 @@ window.addEventListener('mousemove', (e) => {
 
 window.addEventListener('mouseup', (e) => {
     if (interactionType === 'draw-redaction' && isBoxDragging) {
-        // Finalize drawing
         const img = DOM.modalImg;
         const rect = img.getBoundingClientRect();
         const scaleX = img.naturalWidth / rect.width;
@@ -156,13 +155,12 @@ window.addEventListener('mouseup', (e) => {
         const endX = e.clientX;
         const endY = e.clientY;
 
-        // Calculate rect in natural image coordinates
         const x = Math.min(startX, endX) - rect.left;
         const y = Math.min(startY, endY) - rect.top;
         const w = Math.abs(endX - startX);
         const h = Math.abs(endY - startY);
 
-        if (w > 5 && h > 5) { // Minimum size threshold
+        if (w > 5 && h > 5) {
             const newRedaction = {
                 x: x * scaleX,
                 y: y * scaleY,
@@ -171,16 +169,13 @@ window.addEventListener('mouseup', (e) => {
             };
             currentRedactions.push(newRedaction);
 
-            // Update UI
             renderRedactions(currentRedactions);
             updateModalToolbar();
 
-            // Clear canvas
             const canvas = document.getElementById('redaction-canvas');
             const ctx = canvas.getContext('2d');
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // Save state
             const activeData = getActiveRedactionCard();
             activeData.redactions = currentRedactions;
             activeData.card.dataset.redactions = JSON.stringify(currentRedactions);
@@ -194,81 +189,31 @@ window.addEventListener('mouseup', (e) => {
 
 function updateRect(rectObj, dx, dy, maxW, maxH) {
     if (interactionType.endsWith('move')) {
-        const w = rectObj.right - rectObj.left; // or rectObj.w
-        const h = rectObj.bottom - rectObj.top; // or rectObj.h
-
-        // Normalize structure differences: Crop uses top/bottom/left/right, Redaction uses x/y/w/h
-        // Let's standardise or check existence
-        if ('left' in rectObj) {
-            // It's a crop box (l,r,t,b)
-            let newL = rectObj.left + dx;
-            let newT = rectObj.top + dy;
-
-            // Constrain
-            const width = rectObj.right - rectObj.left;
-            const height = rectObj.bottom - rectObj.top;
-
-            newL = Math.max(0, Math.min(newL, maxW - width));
-            newT = Math.max(0, Math.min(newT, maxH - height));
-
-            rectObj.left = newL;
-            rectObj.top = newT;
-            rectObj.right = newL + width;
-            rectObj.bottom = newT + height;
-        } else {
-            // Redaction (x,y,w,h)
-            let newX = rectObj.x + dx;
-            let newY = rectObj.y + dy;
-
-            newX = Math.max(0, Math.min(newX, maxW - rectObj.w));
-            newY = Math.max(0, Math.min(newY, maxH - rectObj.h));
-
-            rectObj.x = newX;
-            rectObj.y = newY;
-        }
+        rectObj.x = Math.max(0, Math.min(rectObj.x + dx, maxW - rectObj.w));
+        rectObj.y = Math.max(0, Math.min(rectObj.y + dy, maxH - rectObj.h));
     }
     else if (interactionType.endsWith('resize')) {
-        // Simple resizing logic based on handle
-        // Note: For crop, we modify left/right/top/bottom
-        // For redaction, we modify x/y/w/h
-
-        if ('left' in rectObj) {
-            // Crop
-            if (activeHandle.includes('n')) rectObj.top = Math.min(rectObj.top + dy, rectObj.bottom - 10);
-            if (activeHandle.includes('s')) rectObj.bottom = Math.max(rectObj.bottom + dy, rectObj.top + 10);
-            if (activeHandle.includes('w')) rectObj.left = Math.min(rectObj.left + dx, rectObj.right - 10);
-            if (activeHandle.includes('e')) rectObj.right = Math.max(rectObj.right + dx, rectObj.left + 10);
-
-            // Bounds check
-            rectObj.left = Math.max(0, rectObj.left);
-            rectObj.top = Math.max(0, rectObj.top);
-            rectObj.right = Math.min(maxW, rectObj.right);
-            rectObj.bottom = Math.min(maxH, rectObj.bottom);
-        } else {
-            // Redaction
-            let right = rectObj.x + rectObj.w;
-            let bottom = rectObj.y + rectObj.h;
-
-            if (activeHandle.includes('n')) {
-                const oldBottom = rectObj.y + rectObj.h;
-                rectObj.y = Math.min(rectObj.y + dy, oldBottom - 10);
-                rectObj.h = oldBottom - rectObj.y;
-            }
-            if (activeHandle.includes('s')) rectObj.h = Math.max(rectObj.h + dy, 10);
-
-            if (activeHandle.includes('w')) {
-                const oldRight = rectObj.x + rectObj.w;
-                rectObj.x = Math.min(rectObj.x + dx, oldRight - 10);
-                rectObj.w = oldRight - rectObj.x;
-            }
-            if (activeHandle.includes('e')) rectObj.w = Math.max(rectObj.w + dx, 10);
+        const minSize = 10;
+        if (activeHandle.includes('n')) {
+            const newY = Math.max(0, Math.min(rectObj.y + dy, rectObj.y + rectObj.h - minSize));
+            rectObj.h += rectObj.y - newY;
+            rectObj.y = newY;
+        }
+        if (activeHandle.includes('s')) {
+            rectObj.h = Math.max(minSize, Math.min(rectObj.h + dy, maxH - rectObj.y));
+        }
+        if (activeHandle.includes('w')) {
+            const newX = Math.max(0, Math.min(rectObj.x + dx, rectObj.x + rectObj.w - minSize));
+            rectObj.w += rectObj.x - newX;
+            rectObj.x = newX;
+        }
+        if (activeHandle.includes('e')) {
+            rectObj.w = Math.max(minSize, Math.min(rectObj.w + dx, maxW - rectObj.x));
         }
     }
 }
 
-// ... Additional modal logic (redactions, resizing, dragging) would go here
-// Due to length, I am simplifying strict porting to keep it functional but readable.
-// The key functions required by app.js are exported.
+// --- Public Interface ---
 
 export function setActiveRedactionCard(data) {
     activeRedactionCard = data;
@@ -293,7 +238,6 @@ export function updateModalToolbar() {
         btnDelete.disabled = (selectedRedactionIndex === -1);
         btnClear.disabled = (currentRedactions.length === 0);
 
-        // Visual feedback for disabled state if CSS doesn't handle it
         btnDelete.style.opacity = btnDelete.disabled ? '0.5' : '1';
         btnClear.style.opacity = btnClear.disabled ? '0.5' : '1';
     } else {
@@ -314,10 +258,7 @@ export function renderRedactions(redactions) {
     currentRedactions.forEach((r, index) => {
         const div = document.createElement('div');
         div.className = `redaction-block ${index === selectedRedactionIndex ? 'selected' : ''}`;
-        div.style.left = `${r.x * scaleX}px`;
-        div.style.top = `${r.y * scaleY}px`;
-        div.style.width = `${r.w * scaleX}px`;
-        div.style.height = `${r.h * scaleY}px`;
+        updateRectStyles(div, r, scaleX, scaleY);
 
         if (index === selectedRedactionIndex) {
             const handles = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
@@ -342,7 +283,6 @@ export function renderRedactions(redactions) {
     });
 }
 
-// Canvas logic for drawing new redactions
 export function setupRedactionCanvas() {
     const modalImg = DOM.modalImg;
     const canvas = document.getElementById('redaction-canvas');
@@ -352,13 +292,9 @@ export function setupRedactionCanvas() {
     canvas.height = rect.height;
     canvas.style.display = 'block';
 
-    // Clear context
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Add drawing listener if not already there (idempotent check hard, so we just add)
-    // Actually, better to add it once in setup or manage state.
-    // Logic below handles interactionType 'draw-redaction'
     canvas.onmousedown = (e) => startBoxInteraction(e, 'draw-redaction');
 }
 
@@ -374,25 +310,21 @@ export function deleteSelectedRedaction() {
     renderRedactions(currentRedactions);
     updateModalToolbar();
 
-    // Update card data
     const activeData = getActiveRedactionCard();
     activeData.redactions = currentRedactions;
     activeData.card.dataset.redactions = JSON.stringify(currentRedactions);
 }
 
 export function clearAllRedactions() {
-    console.log('Clearing all redactions, count was:', currentRedactions.length);
     currentRedactions = [];
     selectedRedactionIndex = -1;
 
-    // Explicitly clear DOM to be safe
     const container = document.getElementById('redactions-container');
     if (container) container.innerHTML = '';
 
     renderRedactions(currentRedactions);
     updateModalToolbar();
 
-    // Update card data
     const activeData = getActiveRedactionCard();
     if (activeData && activeData.card) {
         activeData.redactions = currentRedactions;

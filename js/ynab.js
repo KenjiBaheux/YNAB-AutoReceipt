@@ -2,151 +2,42 @@ import { DOM } from './dom.js';
 import { showToast, updateProgressCounter } from './ui.js';
 import { setYNABCategories, getYNABCategories, markAsProcessed, CONFIG, getYNABPayees, setYNABPayees, getYNABPayeeCategories, setYNABPayeeCategories } from './config.js';
 
-export async function fetchYNABBudgets() {
+// --- API Helpers ---
+
+async function ynabFetch(endpoint, options = {}) {
     const apiPAT = DOM.apiPAT.value;
-    if (!apiPAT) return [];
+    if (!apiPAT) return null;
+
+    const url = `https://api.ynab.com/v1/${endpoint}`;
+    const headers = {
+        'Authorization': `Bearer ${apiPAT}`,
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...options.headers
+    };
 
     try {
-        const response = await fetch('https://api.ynab.com/v1/budgets', {
-            headers: { 'Authorization': `Bearer ${apiPAT}` }
-        });
-
-        if (!response.ok) throw new Error('Failed to fetch budgets');
-
-        const data = await response.json();
-        const budgets = data.data.budgets.map(b => ({
-            id: b.id,
-            name: b.name
-        }));
-
-        updateBudgetDropdown(budgets);
-        return budgets;
+        const response = await fetch(url, { ...options, headers });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error?.detail || `YNAB API error (${response.status})`);
+        }
+        return await response.json();
     } catch (err) {
-        console.error('Error loading YNAB budgets:', err);
-        showToast('Failed to load budgets', 'error');
-        return [];
+        console.error(`Error YNAB request to ${endpoint}:`, err);
+        showToast(err.message || 'YNAB connection failed', 'error');
+        throw err;
     }
 }
 
-export async function fetchYNABAccounts(budgetId) {
-    const apiPAT = DOM.apiPAT.value;
-    if (!apiPAT || !budgetId) return [];
-
-    try {
-        const response = await fetch(`https://api.ynab.com/v1/budgets/${budgetId}/accounts`, {
-            headers: { 'Authorization': `Bearer ${apiPAT}` }
-        });
-
-        if (!response.ok) throw new Error('Failed to fetch accounts');
-
-        const data = await response.json();
-        // Filter for on_budget accounts
-        const accounts = data.data.accounts
-            .filter(a => a.on_budget && !a.closed)
-            .map(a => ({
-                id: a.id,
-                name: a.name,
-                type: a.type
-            }));
-
-        updateAccountDropdown(accounts);
-        return accounts;
-    } catch (err) {
-        console.error('Error loading YNAB accounts:', err);
-        showToast('Failed to load accounts', 'error');
-        return [];
-    }
-}
-
-function updateBudgetDropdown(budgets) {
-    const currentBudgetId = localStorage.getItem(CONFIG.ynabBudgetIdPath);
-    const optionsHtml = '<option value="">Select a budget...</option>' +
-        budgets.map(b => `<option value="${b.id}" ${b.id === currentBudgetId ? 'selected' : ''}>${b.name}</option>`).join('');
-
-    if (DOM.budgetId) {
-        DOM.budgetId.innerHTML = optionsHtml;
-    }
-    if (DOM.setupBudget) {
-        DOM.setupBudget.innerHTML = optionsHtml;
-    }
-}
-
-function updateAccountDropdown(accounts) {
-    const currentAccountId = localStorage.getItem(CONFIG.ynabAccountIdPath);
-    const optionsHtml = '<option value="">Select an account...</option>' +
-        accounts.map(a => `<option value="${a.id}" ${a.id === currentAccountId ? 'selected' : ''}>${a.name} (${a.type})</option>`).join('');
-
-    if (DOM.accountId) {
-        DOM.accountId.innerHTML = optionsHtml;
-    }
-    if (DOM.setupAccount) {
-        DOM.setupAccount.innerHTML = optionsHtml;
-    }
-    if (DOM.settingsAccountId) {
-        DOM.settingsAccountId.innerHTML = optionsHtml;
-    }
-}
-
-export async function fetchYNABCategories(forceRefresh = false) {
-    const apiPAT = DOM.apiPAT.value;
+async function postTransactions(payload) {
     const budgetId = DOM.budgetId.value;
-
-    if (!apiPAT || !budgetId) {
-        updateCategoryUI([]); // Clear UI if no budget
-        return [];
-    }
-
-    const cached = getYNABCategories();
-    // cached now expected to be { budgetId, categories } or []
-
-    // Use cached if available, not forced, and matches current budget
-    if (!forceRefresh && cached && cached.budgetId === budgetId && cached.categories.length > 0) {
-        console.log(`Using ${cached.categories.length} cached YNAB categories for budget ${budgetId}`);
-        updateCategoryUI(cached.categories);
-        return cached.categories;
-    }
-
-    // UI Feedback for refresh
-    const refreshBtn = document.getElementById('btn-refresh-categories');
-    if (refreshBtn) refreshBtn.classList.add('rotating');
-
-    try {
-        const response = await fetch(`https://api.ynab.com/v1/budgets/${budgetId}/categories`, {
-            headers: { 'Authorization': `Bearer ${apiPAT}` }
-        });
-
-        if (!response.ok) throw new Error('Failed to fetch categories');
-
-        const data = await response.json();
-        const groups = data.data.category_groups;
-
-        const categoriesList = [];
-        groups.forEach(group => {
-            if (group.hidden || group.deleted) return;
-            group.categories.forEach(cat => {
-                if (!cat.hidden && !cat.deleted) {
-                    categoriesList.push({
-                        id: cat.id,
-                        name: cat.name,
-                        group: group.name
-                    });
-                }
-            });
-        });
-
-        setYNABCategories({ budgetId, categories: categoriesList });
-        updateCategoryUI(categoriesList);
-        showToast(`Loaded ${categoriesList.length} YNAB categories`, 'success');
-        console.log(`Loaded ${categoriesList.length} YNAB categories`);
-        return categoriesList;
-    } catch (err) {
-        console.error('Error loading YNAB categories:', err);
-        showToast('Failed to load categories', 'error');
-        return [];
-    } finally {
-        if (refreshBtn) refreshBtn.classList.remove('rotating');
-    }
+    return ynabFetch(`budgets/${budgetId}/transactions`, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+    });
 }
+
+// --- UI Rendering Helpers ---
 
 function escapeHTML(str) {
     if (!str) return '';
@@ -155,12 +46,38 @@ function escapeHTML(str) {
     );
 }
 
+function populateSelect(selectEl, items, selectedValue, defaultText, formatter = (x) => x) {
+    if (!selectEl) return;
+    selectEl.innerHTML = `<option value="">${defaultText}</option>` +
+        items.map(item => {
+            const val = typeof item === 'object' ? item.id : item;
+            const formatted = formatter(item);
+            return `<option value="${escapeHTML(val)}" ${val === selectedValue ? 'selected' : ''}>${escapeHTML(formatted)}</option>`;
+        }).join('');
+}
+
+function updateBudgetDropdown(budgets) {
+    const currentBudgetId = localStorage.getItem(CONFIG.ynabBudgetIdPath);
+    [DOM.budgetId, DOM.setupBudget].forEach(el => 
+        populateSelect(el, budgets, currentBudgetId, 'Select a budget...', b => b.name)
+    );
+}
+
+function updateAccountDropdown(accounts) {
+    const currentAccountId = localStorage.getItem(CONFIG.ynabAccountIdPath);
+    [DOM.accountId, DOM.setupAccount, DOM.settingsAccountId].forEach(el => 
+        populateSelect(el, accounts, currentAccountId, 'Select an account...', a => `${a.name} (${a.type})`)
+    );
+}
+
 function updateCategoryUI(categories) {
     const list = document.getElementById('ynab-category-list');
     const countLabel = document.getElementById('category-count');
 
     if (list) {
-        list.innerHTML = categories.map(c => `<option value="${escapeHTML(c.name)}">${escapeHTML(c.group)}: ${escapeHTML(c.name)}</option>`).join('');
+        list.innerHTML = categories.map(c => 
+            `<option value="${escapeHTML(c.name)}">${escapeHTML(c.group)}: ${escapeHTML(c.name)}</option>`
+        ).join('');
     }
     if (countLabel) {
         countLabel.textContent = `${categories.length} cats`;
@@ -171,18 +88,93 @@ export function updatePayeeUI(payees) {
     const list = document.getElementById('ynab-merchant-list');
     if (list) {
         const arr = Array.isArray(payees) ? payees : [];
-        const displayLimit = 100;
-        const displayPayees = arr.slice(0, displayLimit);
-        list.innerHTML = displayPayees.map(p => `<option value="${escapeHTML(p)}"></option>`).join('');
+        list.innerHTML = arr.slice(0, 100).map(p => `<option value="${escapeHTML(p)}"></option>`).join('');
     }
 }
 
+// --- Data Fetching Functions ---
+
+export async function fetchYNABBudgets() {
+    try {
+        const data = await ynabFetch('budgets');
+        if (!data) return [];
+        const budgets = data.data.budgets.map(b => ({ id: b.id, name: b.name }));
+        updateBudgetDropdown(budgets);
+        return budgets;
+    } catch {
+        return [];
+    }
+}
+
+export async function fetchYNABAccounts(budgetId) {
+    if (!budgetId) return [];
+    try {
+        const data = await ynabFetch(`budgets/${budgetId}/accounts`);
+        if (!data) return [];
+        const accounts = data.data.accounts
+            .filter(a => a.on_budget && !a.closed)
+            .map(a => ({ id: a.id, name: a.name, type: a.type }));
+        updateAccountDropdown(accounts);
+        return accounts;
+    } catch {
+        return [];
+    }
+}
+
+async function ensureCategoriesLoaded(budgetId) {
+    const categoryData = getYNABCategories();
+    let ynabCategories = Array.isArray(categoryData) ? categoryData : (categoryData?.categories || []);
+    if (ynabCategories.length === 0 || (!Array.isArray(categoryData) && categoryData.budgetId !== budgetId)) {
+        ynabCategories = await fetchYNABCategories();
+    }
+    return ynabCategories;
+}
+
+export async function fetchYNABCategories(forceRefresh = false) {
+    const budgetId = DOM.budgetId.value;
+    if (!budgetId) {
+        updateCategoryUI([]);
+        return [];
+    }
+
+    const cached = getYNABCategories();
+    if (!forceRefresh && cached && cached.budgetId === budgetId && cached.categories.length > 0) {
+        console.log(`Using ${cached.categories.length} cached YNAB categories for budget ${budgetId}`);
+        updateCategoryUI(cached.categories);
+        return cached.categories;
+    }
+
+    const refreshBtn = document.getElementById('btn-refresh-categories');
+    if (refreshBtn) refreshBtn.classList.add('rotating');
+
+    try {
+        const data = await ynabFetch(`budgets/${budgetId}/categories`);
+        if (!data) return [];
+
+        const categoriesList = [];
+        data.data.category_groups.forEach(group => {
+            if (group.hidden || group.deleted) return;
+            group.categories.forEach(cat => {
+                if (!cat.hidden && !cat.deleted) {
+                    categoriesList.push({ id: cat.id, name: cat.name, group: group.name });
+                }
+            });
+        });
+
+        setYNABCategories({ budgetId, categories: categoriesList });
+        updateCategoryUI(categoriesList);
+        showToast(`Loaded ${categoriesList.length} YNAB categories`, 'success');
+        return categoriesList;
+    } catch {
+        return [];
+    } finally {
+        if (refreshBtn) refreshBtn.classList.remove('rotating');
+    }
+}
 
 export async function fetchYNABPayees(forceRefresh = false) {
-    const apiPAT = DOM.apiPAT.value;
     const budgetId = DOM.budgetId.value;
-
-    if (!apiPAT || !budgetId) {
+    if (!budgetId) {
         updatePayeeUI([]);
         return [];
     }
@@ -195,33 +187,24 @@ export async function fetchYNABPayees(forceRefresh = false) {
     }
 
     try {
-        const response = await fetch(`https://api.ynab.com/v1/budgets/${budgetId}/payees`, {
-            headers: { 'Authorization': `Bearer ${apiPAT}` }
-        });
+        const data = await ynabFetch(`budgets/${budgetId}/payees`);
+        if (!data) return [];
 
-        if (!response.ok) throw new Error('Failed to fetch payees');
-
-        const data = await response.json();
-        // Ignore deleted payees and transfer payees (which have transfer_account_id)
         const payeesList = data.data.payees
             .filter(p => !p.deleted && !p.transfer_account_id)
             .map(p => p.name);
 
         setYNABPayees({ budgetId, payees: payeesList });
-        console.log(`Loaded ${payeesList.length} YNAB payees`);
         updatePayeeUI(payeesList);
         return payeesList;
-    } catch (err) {
-        console.error('Error loading YNAB payees:', err);
+    } catch {
         return [];
     }
 }
 
 export async function fetchYNABTransactionsAndBuildMap(forceRefresh = false) {
-    const apiPAT = DOM.apiPAT.value;
     const budgetId = DOM.budgetId.value;
-
-    if (!apiPAT || !budgetId) return null;
+    if (!budgetId) return null;
 
     const cached = getYNABPayeeCategories();
     if (!forceRefresh && cached && cached.budgetId === budgetId && cached.map) {
@@ -234,30 +217,17 @@ export async function fetchYNABTransactionsAndBuildMap(forceRefresh = false) {
     }
 
     try {
-        const response = await fetch(`https://api.ynab.com/v1/budgets/${budgetId}/transactions`, {
-            headers: { 'Authorization': `Bearer ${apiPAT}` }
-        });
-
-        if (!response.ok) throw new Error('Failed to fetch transactions');
-
-        const data = await response.json();
-        const transactions = data.data.transactions;
+        const data = await ynabFetch(`budgets/${budgetId}/transactions`);
+        if (!data) return null;
 
         const freqMap = {};
         const payeeCountMap = {};
-        for (const t of transactions) {
-            if (t.deleted) continue;
-            const payee = t.payee_name;
-            const category = t.category_name;
-            
-            // Skip transfers and uncategorized/split lines if they don't have clear names
-            if (!payee || !category || category === 'Uncategorized' || t.transfer_account_id) continue;
+        for (const t of data.data.transactions) {
+            if (t.deleted || !t.payee_name || !t.category_name || t.category_name === 'Uncategorized' || t.transfer_account_id) continue;
 
-            if (!freqMap[payee]) {
-                freqMap[payee] = {};
-            }
+            const { payee_name: payee, category_name: category } = t;
+            freqMap[payee] = freqMap[payee] || {};
             freqMap[payee][category] = (freqMap[payee][category] || 0) + 1;
-
             payeeCountMap[payee] = (payeeCountMap[payee] || 0) + 1;
         }
 
@@ -271,49 +241,36 @@ export async function fetchYNABTransactionsAndBuildMap(forceRefresh = false) {
                     bestCategory = category;
                 }
             }
-            if (bestCategory) {
-                finalMap[payee] = bestCategory;
-            }
+            if (bestCategory) finalMap[payee] = bestCategory;
         }
 
         setYNABPayeeCategories({ budgetId, map: finalMap });
-        console.log(`Built Payee->Category map with ${Object.keys(finalMap).length} payees`);
 
-        // Sort payees by frequency
         const cachedPayeesData = getYNABPayees();
         if (cachedPayeesData && cachedPayeesData.budgetId === budgetId && cachedPayeesData.payees) {
-            const payeesList = [...cachedPayeesData.payees];
-            payeesList.sort((a, b) => {
-                const countA = payeeCountMap[a] || 0;
-                const countB = payeeCountMap[b] || 0;
-                if (countB !== countA) {
-                    return countB - countA;
-                }
-                return a.localeCompare(b);
+            const payeesList = [...cachedPayeesData.payees].sort((a, b) => {
+                const countDiff = (payeeCountMap[b] || 0) - (payeeCountMap[a] || 0);
+                return countDiff !== 0 ? countDiff : a.localeCompare(b);
             });
             setYNABPayees({ budgetId, payees: payeesList });
             updatePayeeUI(payeesList);
         }
 
         return finalMap;
-
-    } catch (err) {
-        console.error('Error fetching transactions for map:', err);
+    } catch {
         return null;
     }
 }
+
+// --- Levenshtein Distance & Payee Fuzzy Match ---
 
 function levenshteinDistance(a, b) {
     const matrix = [];
     if (a.length === 0) return b.length;
     if (b.length === 0) return a.length;
 
-    for (let i = 0; i <= b.length; i++) {
-        matrix[i] = [i];
-    }
-    for (let j = 0; j <= a.length; j++) {
-        matrix[0][j] = j;
-    }
+    for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+    for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
 
     for (let i = 1; i <= b.length; i++) {
         for (let j = 1; j <= a.length; j++) {
@@ -322,7 +279,8 @@ function levenshteinDistance(a, b) {
             } else {
                 matrix[i][j] = Math.min(
                     matrix[i - 1][j - 1] + 1, // substitution
-                    Math.min(matrix[i][j - 1] + 1, matrix[i - 1][j] + 1) // insertion, deletion
+                    matrix[i][j - 1] + 1,     // insertion
+                    matrix[i - 1][j] + 1      // deletion
                 );
             }
         }
@@ -332,18 +290,15 @@ function levenshteinDistance(a, b) {
 
 export function findClosestPayee(target, payeesList) {
     if (!target || !payeesList || payeesList.length === 0) return null;
-    
+
     let closest = null;
     let minDistance = Infinity;
     const normalizedTarget = target.toLowerCase().trim();
 
     for (const payee of payeesList) {
         const normalizedPayee = payee.toLowerCase().trim();
-        // Exact match case
-        if (normalizedTarget === normalizedPayee) {
-            return payee; // Found exact, return immediately
-        }
-        
+        if (normalizedTarget === normalizedPayee) return payee; // Exact match
+
         const distance = levenshteinDistance(normalizedTarget, normalizedPayee);
         if (distance < minDistance) {
             minDistance = distance;
@@ -351,15 +306,16 @@ export function findClosestPayee(target, payeesList) {
         }
     }
 
-    // Heuristic threshold: Max 3 edits, or proportional to length
     if (minDistance > 0 && minDistance <= Math.max(3, normalizedTarget.length * 0.4)) {
         return closest;
     }
     return null;
 }
 
+// --- Push Transactions ---
+
 export function prepareTransactionData(card, ynabCategories, accountId) {
-    const merchant = card.querySelector('.merchant-input').value;
+    const merchant = card.querySelector('.merchant-input').value.trim();
     const date = card.querySelector('.date-input').value;
     const amountVal = card.querySelector('.amount-input').value;
     const categoryName = card.querySelector('.category-input').value.trim();
@@ -368,30 +324,22 @@ export function prepareTransactionData(card, ynabCategories, accountId) {
         return { error: 'Missing required fields (Merchant, Date, or Amount)' };
     }
 
-    // Resolve Category ID
     let categoryId = null;
     if (categoryName) {
-        // Case-insensitive match, ignore whitespace
         const normalizedInput = categoryName.toLowerCase();
         const match = ynabCategories.find(c => c.name.toLowerCase() === normalizedInput);
-
         if (match) {
             categoryId = match.id;
-        } else if (ynabCategories.length > 0) {
-            // Only error if we actually have categories loaded
-            return { error: `Category "${categoryName}" not found.` };
         } else {
-            return { error: `Categories not loaded. Please refresh.` };
+            return { error: ynabCategories.length > 0 ? `Category "${categoryName}" not found.` : `Categories not loaded. Please refresh.` };
         }
     }
-
-    const amount = parseInt(amountVal) * 1000; // JPY Amount * 1000 for YNAB milliunits
 
     return {
         data: {
             account_id: accountId,
-            date: date,
-            amount: -Math.abs(amount), // Outflow
+            date,
+            amount: -Math.abs(parseInt(amountVal) * 1000), // Outflow in milliunits
             payee_name: merchant,
             category_id: categoryId,
             cleared: 'cleared',
@@ -406,24 +354,17 @@ export function prepareTransactionData(card, ynabCategories, accountId) {
 }
 
 export async function pushToYNAB(card, fileName) {
-    const apiPAT = DOM.apiPAT.value;
     const budgetId = DOM.budgetId.value;
     const accountId = DOM.accountId.value;
-    if (!apiPAT || !budgetId || !accountId) {
+    if (!budgetId || !accountId) {
         showToast('Please fill in all YNAB settings.', 'error');
         return false;
     }
 
-    let categoryData = getYNABCategories();
-    let ynabCategories = Array.isArray(categoryData) ? categoryData : (categoryData.categories || []);
-
-    // Ensure categories are for the current budget
-    if (ynabCategories.length === 0 || (!Array.isArray(categoryData) && categoryData.budgetId !== budgetId)) {
-        ynabCategories = await fetchYNABCategories();
-        if (ynabCategories.length === 0) {
-            showToast('Could not load YNAB categories. Please check API key.', 'error');
-            return false;
-        }
+    const ynabCategories = await ensureCategoriesLoaded(budgetId);
+    if (ynabCategories.length === 0) {
+        showToast('Could not load YNAB categories. Please check API key.', 'error');
+        return false;
     }
 
     const result = prepareTransactionData(card, ynabCategories, accountId);
@@ -432,43 +373,25 @@ export async function pushToYNAB(card, fileName) {
         return false;
     }
 
-    const transaction = {
-        transaction: result.data
-    };
-
     const pushBtn = card.querySelector('.btn-push');
     pushBtn.disabled = true;
     pushBtn.textContent = '⏳';
 
     try {
-        const response = await fetch(`https://api.ynab.com/v1/budgets/${budgetId}/transactions`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${apiPAT}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(transaction)
-        });
-
-        if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.error.detail || 'YNAB API error');
-        }
-
+        await postTransactions({ transaction: result.data });
         showToast(`Synced ${result.meta.merchant} to YNAB!`, 'success');
         card.classList.add('synced');
         setTimeout(() => {
             card.remove();
             markAsProcessed(fileName);
-            updateProgressCounter(); // Update progress when a card is removed
+            updateProgressCounter();
         }, 500);
-    } catch (err) {
-        showToast(err.message, 'error');
+        return true;
+    } catch {
         pushBtn.disabled = false;
         pushBtn.innerHTML = '<span class="icon">💰</span> Push to YNAB';
         return false;
     }
-    return true;
 }
 
 export async function pushAllToYNAB() {
@@ -483,34 +406,25 @@ export async function pushAllToYNAB() {
         return;
     }
 
-    const apiPAT = DOM.apiPAT.value;
     const budgetId = DOM.budgetId.value;
     const accountId = DOM.accountId.value;
-    if (!apiPAT || !budgetId || !accountId) {
+    if (!budgetId || !accountId) {
         showToast('Please fill in all YNAB settings.', 'error');
         return;
     }
 
-    let categoryData = getYNABCategories();
-    let ynabCategories = Array.isArray(categoryData) ? categoryData : (categoryData.categories || []);
-
-    if (ynabCategories.length === 0 || (!Array.isArray(categoryData) && categoryData.budgetId !== budgetId)) {
-        ynabCategories = await fetchYNABCategories();
-        if (ynabCategories.length === 0) {
-            showToast('Could not load YNAB categories. Please check API key.', 'error');
-            return;
-        }
+    const ynabCategories = await ensureCategoriesLoaded(budgetId);
+    if (ynabCategories.length === 0) {
+        showToast('Could not load YNAB categories. Please check API key.', 'error');
+        return;
     }
 
-    // Prepare all transactions
     const validTransactions = [];
     const processedCards = [];
 
     for (const card of readyCards) {
         const result = prepareTransactionData(card, ynabCategories, accountId);
         if (result.error) {
-            // Highlight error on card but don't block others (or maybe warn user?)
-            // For now, let's skip invalid ones and notify at the end
             console.error(`Skipping card due to error: ${result.error}`);
             continue;
         }
@@ -523,35 +437,15 @@ export async function pushAllToYNAB() {
         return;
     }
 
-    // UI Updates: Disable buttons
     DOM.btnPushAll.disabled = true;
     const allPushBtns = Array.from(DOM.receiptList.querySelectorAll('.btn-push'));
     allPushBtns.forEach(btn => btn.disabled = true);
-
-    // Update progress text
     DOM.progressCounter.querySelector('.progress-text').textContent = `Pushing ${validTransactions.length} transactions...`;
 
     try {
-        const response = await fetch(`https://api.ynab.com/v1/budgets/${budgetId}/transactions`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${apiPAT}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ transactions: validTransactions })
-        });
-
-        if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.error.detail || 'YNAB Bulk API error');
-        }
-
-        const data = await response.json();
-        // data.data.transaction_ids or duplicate_import_ids might be useful but we just assume success for now
-
+        await postTransactions({ transactions: validTransactions });
         showToast(`Successfully pushed ${validTransactions.length} receipts to YNAB!`, 'success');
 
-        // Cleanup processed cards
         processedCards.forEach(card => {
             const fileName = card.querySelector('.merchant-input').placeholder || 'receipt';
             card.classList.add('synced');
@@ -561,14 +455,9 @@ export async function pushAllToYNAB() {
                 updateProgressCounter();
             }, 500);
         });
-
     } catch (err) {
         console.error('Bulk push error:', err);
-        showToast(`Bulk push failed: ${err.message}`, 'error');
-        // Re-enable buttons if failed
         allPushBtns.forEach(btn => {
-            // Only re-enable if it wasn't already disabled (but here we disabled all, so re-enable all)
-            // Actually we should only re-enable the ones we tried to push
             btn.disabled = false;
             btn.innerHTML = '<span class="icon">💰</span> Push to YNAB';
         });

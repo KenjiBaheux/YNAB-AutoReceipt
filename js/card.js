@@ -1,22 +1,22 @@
 import { DOM } from './dom.js';
-import { pushToYNAB } from './ynab.js';
-import { findClosestPayee } from './ynab.js';
+import { pushToYNAB, findClosestPayee } from './ynab.js';
 import { renderChips, updateProgressCounter } from './ui.js';
 import { markAsProcessed, getYNABPayees, getYNABPayeeCategories, isHeuristicFilenameEnabled, getHeuristicFilenamePattern, isHeuristicPayeeMatchingEnabled, isHeuristicTypicalCategoryEnabled } from './config.js';
 import { setActiveRedactionCard, setupCroppingUI, renderRedactions, updateModalToolbar, setupRedactionCanvas, clearRedactionCanvas } from './modal.js';
 
 let cardCounter = 0;
 
+// --- Card Generation ---
+
 export function createReceiptCard(fileName, optimizedBlob, displayUrl, originalFile, autoBounds) {
     cardCounter++;
     const card = document.createElement('div');
     card.className = 'receipt-card queued';
     card.id = `receipt-${cardCounter}`;
-    card.dataset.merchant = fileName; // Initial fallback
+    card.dataset.merchant = fileName;
     card.dataset.bounds = JSON.stringify(autoBounds);
     card.dataset.redactions = JSON.stringify([]);
 
-    // Store original URL as well
     const originalUrl = URL.createObjectURL(originalFile);
     card.dataset.originalUrl = originalUrl;
 
@@ -56,12 +56,11 @@ export function createReceiptCard(fileName, optimizedBlob, displayUrl, originalF
         </div>
     `;
 
-    // Modal logic
+    // Preview / Modal click handler
     card.querySelector('.receipt-preview-container').addEventListener('click', () => {
         const currentBounds = card.dataset.bounds ? JSON.parse(card.dataset.bounds) : null;
         const currentRedactions = card.dataset.redactions ? JSON.parse(card.dataset.redactions) : [];
 
-        // Set state in modal.js
         setActiveRedactionCard({
             card,
             fileName,
@@ -73,37 +72,26 @@ export function createReceiptCard(fileName, optimizedBlob, displayUrl, originalF
             initialRedactions: [...currentRedactions]
         });
 
-        const modal = DOM.modal;
-        const modalImg = DOM.modalImg;
-
-        // Reset previous state
-        modalImg.onload = null;
-        modalImg.src = '';
-
-        modal.style.display = 'block';
+        DOM.modalImg.onload = null;
+        DOM.modalImg.src = '';
+        DOM.modal.style.display = 'block';
         document.body.classList.add('modal-open');
 
-        // Wait for load to ensure layout dimensions are correct for overlays
-        modalImg.onload = () => {
-            // Always show Retry button when modal is open
+        DOM.modalImg.onload = () => {
             DOM.btnRetryAI.style.display = 'block';
-
-            // Setup Cropping Visualization
-            setupCroppingUI(modalImg, currentBounds);
-
-            // Setup Redactions
+            setupCroppingUI(DOM.modalImg, currentBounds);
             renderRedactions(currentRedactions);
             updateModalToolbar();
 
-            if (modal.classList.contains('redact-mode')) {
+            if (DOM.modal.classList.contains('redact-mode')) {
                 setupRedactionCanvas();
             } else {
                 clearRedactionCanvas();
             }
         };
 
-        modalImg.src = card.dataset.originalUrl;
-        modalImg.classList.remove('zoomed'); // Reset zoom on open
+        DOM.modalImg.src = card.dataset.originalUrl;
+        DOM.modalImg.classList.remove('zoomed');
     });
 
     card.querySelector('.btn-push').addEventListener('click', () => pushToYNAB(card, fileName));
@@ -111,10 +99,7 @@ export function createReceiptCard(fileName, optimizedBlob, displayUrl, originalF
         card.remove();
         markAsProcessed(fileName);
         updateProgressCounter();
-
-        // Update files in queue count
-        const currentCount = parseInt(DOM.processedCount.textContent) || 0;
-        DOM.processedCount.textContent = Math.max(0, currentCount - 1);
+        DOM.processedCount.textContent = Math.max(0, (parseInt(DOM.processedCount.textContent) || 0) - 1);
     });
 
     const merchantInput = card.querySelector('.merchant-input');
@@ -130,7 +115,6 @@ export function createReceiptCard(fileName, optimizedBlob, displayUrl, originalF
         const hasMerchant = merchantInput.value.trim() !== '';
         const hasDate = dateInput.value.trim() !== '';
         const hasAmount = amountInput.value.trim() !== '' && parseInt(amountInput.value) > 0;
-        
         pushBtn.disabled = !(hasMerchant && hasDate && hasAmount);
     };
 
@@ -142,11 +126,23 @@ export function createReceiptCard(fileName, optimizedBlob, displayUrl, originalF
     return card;
 }
 
+// --- Card Updates & Candidates Chip Construction ---
+
+function buildChips(mainCandidates, filenameVal, heuristicVal) {
+    const chips = mainCandidates.map(val => ({ value: val, isHeuristic: false }));
+    if (filenameVal && !mainCandidates.includes(filenameVal)) {
+        chips.push({ value: filenameVal, isFilename: true });
+    }
+    if (heuristicVal && !mainCandidates.includes(heuristicVal) && filenameVal !== heuristicVal) {
+        chips.push({ value: heuristicVal, isHeuristic: true });
+    }
+    return chips;
+}
+
 export function updateReceiptCard(card, data) {
     card.classList.remove('processing');
-    updateProgressCounter(); // Update the analysis progress counter
+    updateProgressCounter();
 
-    // Deduplicate candidates while preserving order and normalizing
     const dedupe = (arr) => {
         const seen = new Set();
         return (arr || []).filter(item => {
@@ -166,61 +162,39 @@ export function updateReceiptCard(card, data) {
     const fileName = card.dataset.merchant || '';
     const fileInfo = isHeuristicFilenameEnabled() ? extractInfoFromFilename(fileName) : null;
 
-    // Set primary values (most likely)
+    // Apply primary values
     card.querySelector('.merchant-input').value = merchants[0] || '';
     card.querySelector('.date-input').value = normalizeDate(dates[0]) || '';
     card.querySelector('.amount-input').value = amounts[0] || 0;
     card.querySelector('.category-input').value = categories[0] || '';
     card.querySelector('.btn-push').disabled = false;
 
-    // Compute chips for merchants
-    const merchantChips = merchants.map(m => ({ value: m, isHeuristic: false }));
-    if (fileInfo && fileInfo.payee) {
-        if (!merchants.includes(fileInfo.payee)) {
-            merchantChips.push({ value: fileInfo.payee, isFilename: true });
-        }
-    }
-
+    // Merchants
+    let closestPayee = null;
     const cachedPayees = getYNABPayees();
-    if (isHeuristicPayeeMatchingEnabled() && merchants[0] && cachedPayees && cachedPayees.payees) {
-        const closest = findClosestPayee(merchants[0], cachedPayees.payees);
-        if (closest && !merchants.includes(closest) && !(fileInfo && fileInfo.payee === closest)) {
-            // Add as a heuristic chip
-            merchantChips.push({ value: closest, isHeuristic: true });
-        }
+    if (isHeuristicPayeeMatchingEnabled() && merchants[0] && cachedPayees?.payees) {
+        closestPayee = findClosestPayee(merchants[0], cachedPayees.payees);
     }
+    const merchantChips = buildChips(merchants, fileInfo?.payee, closestPayee);
 
-    // Compute chips for categories
-    const categoryChips = categories.map(c => ({ value: c, isHeuristic: false }));
+    // Categories
+    let typicalCategory = null;
     const cachedPayeeCats = getYNABPayeeCategories();
-    const targetPayee = (merchantChips.find(m => m.isHeuristic) || merchantChips[0])?.value;
-
-    if (isHeuristicTypicalCategoryEnabled() && targetPayee && cachedPayeeCats && cachedPayeeCats.map) {
-        const typicalCategory = cachedPayeeCats.map[targetPayee];
-        if (typicalCategory && !categories.includes(typicalCategory)) {
-            categoryChips.push({ value: typicalCategory, isHeuristic: true });
-        }
+    const targetPayee = merchantChips.find(m => m.isHeuristic || m.value)?.value;
+    if (isHeuristicTypicalCategoryEnabled() && targetPayee && cachedPayeeCats?.map) {
+        typicalCategory = cachedPayeeCats.map[targetPayee];
     }
+    const categoryChips = buildChips(categories, null, typicalCategory);
 
-    // Compute chips for dates
-    const dateChips = dates.map(d => ({ value: d, isHeuristic: false }));
-    if (fileInfo && fileInfo.date) {
-        const normalizedFileDate = normalizeDate(fileInfo.date);
-        const isDuplicateDate = dates.some(d => normalizeDate(d) === normalizedFileDate);
-        if (!isDuplicateDate) {
-            dateChips.push({ value: fileInfo.date, isFilename: true });
-        }
-    }
+    // Dates & Amounts (Normalized)
+    const normalizedDates = dates.map(normalizeDate).filter(Boolean);
+    const normalizedFileDate = fileInfo ? normalizeDate(fileInfo.date) : '';
+    const dateChips = buildChips(normalizedDates, normalizedFileDate, null);
 
-    // Compute chips for amounts
-    const amountChips = amounts.map(a => ({ value: a, isHeuristic: false }));
-    if (fileInfo && fileInfo.amount) {
-        if (!amounts.some(a => String(a) === fileInfo.amount)) {
-            amountChips.push({ value: fileInfo.amount, isFilename: true });
-        }
-    }
+    const stringAmounts = amounts.map(String);
+    const amountChips = buildChips(stringAmounts, fileInfo?.amount ? String(fileInfo.amount) : null, null);
 
-    // Render alternative chips
+    // Render chips
     renderChips(card.querySelector('.merchants-chips'), merchantChips, val => {
         card.querySelector('.merchant-input').value = val;
     });
@@ -235,53 +209,42 @@ export function updateReceiptCard(card, data) {
     });
 }
 
+// --- Filename & Date Utilities ---
+
 function normalizeDate(dateStr) {
     if (!dateStr) return '';
 
-    // 1. Replace all separators (dots, slashes, kanji) and spaces with a single dash
-    let clean = dateStr.replace(/[年月日\/\.\s]+/g, '-');
-    // 2. Remove leading/trailing dashes
-    clean = clean.replace(/^-+|-+$/g, '');
+    let clean = dateStr.replace(/[年月日\/\.\s]+/g, '-').replace(/^-+|-+$/g, '');
+    const parts = clean.split('-').map(p => p.trim()).filter(Boolean);
 
-    const parts = clean.split('-').map(p => p.trim()).filter(p => p !== '');
-
-    // We expect Year, Month, Day. 
-    // Sometimes AI returns them in different orders, but YYYY is easy to spot.
     if (parts.length >= 3) {
         let y = '', m = '', d = '';
-
-        // Find 4-digit year or assume first
         const yearIndex = parts.findIndex(p => p.length === 4);
         if (yearIndex !== -1) {
             y = parts[yearIndex];
-            // Take the other two as month/day in order
             const others = parts.filter((_, i) => i !== yearIndex);
             m = others[0];
             d = others[1];
         } else {
             [y, m, d] = parts;
-            // Basic transformation for 2-digit years
             if (y.length === 2) y = '20' + y;
         }
 
-        // Padding
         m = m.padStart(2, '0');
         d = d.padStart(2, '0');
-
         const iso = `${y}-${m}-${d}`;
-        // Validate it's a real date
         if (!isNaN(Date.parse(iso))) {
             return iso;
         }
     }
-    return ''; // Return empty if invalid to avoid browser warnings
+    return '';
 }
 
-function extractInfoFromFilename(fileName) {
+export function extractInfoFromFilename(fileName) {
     if (!fileName) return null;
-    const name = fileName.replace(/\.[^/.]+$/, ""); // remove extension
-    
+    const name = fileName.replace(/\.[^/.]+$/, "");
     const pattern = getHeuristicFilenamePattern();
+
     let dateMatch;
     try {
         dateMatch = name.match(new RegExp(pattern));
@@ -289,11 +252,11 @@ function extractInfoFromFilename(fileName) {
         console.error('Invalid filename heuristic regex pattern:', err);
         return null;
     }
-    
+
     if (!dateMatch) return null;
 
-    const dateStr = dateMatch[1].replace(/_/g, '-'); // YYYY-MM-DD
-    let rest = dateMatch[2] || '';
+    const dateStr = dateMatch[1].replace(/_/g, '-');
+    const rest = dateMatch[2] || '';
 
     const amountMatch = rest.match(/_+([0-9()][0-9(),_]*|[^_]+)$/);
     let payee = rest;
@@ -304,9 +267,8 @@ function extractInfoFromFilename(fileName) {
         payee = rest.substring(0, rest.length - amountMatch[0].length);
     }
 
-    payee = payee.replace(/^_+|_+$/g, ''); // trim underscores
+    payee = payee.replace(/^_+|_+$/g, '');
     if (amountStr) {
-        // remove formatting like commas, underscores, parentheses
         amountStr = amountStr.replace(/[_,()]/g, '');
     }
 
